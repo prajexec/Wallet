@@ -72,6 +72,8 @@ type OutboxMessage struct {
 	PublishedAt   *time.Time       `db:"published_at"`
 	Attempts      int32            `db:"attempts"`
 	NextAttemptAt time.Time        `db:"next_attempt_at"`
+	LastError     *string          `db:"last_error"`
+	LockedUntil   *time.Time       `db:"locked_until"`
 }
 
 type Wallet struct {

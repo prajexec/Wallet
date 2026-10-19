@@ -17,14 +17,18 @@ type LookupFunc func(string) (string, bool)
 // instances use the same binary with different INSTANCE_NAME and database
 // credentials/URLs.
 type Config struct {
-	ServiceName     string
-	InstanceName    string
-	HTTPAddr        string
-	DatabaseURL     string
-	NATSURL         string
-	ShutdownTimeout time.Duration
-	HealthTimeout   time.Duration
-	LogLevel        string
+	ServiceName        string
+	InstanceName       string
+	HTTPAddr           string
+	DatabaseURL        string
+	NATSURL            string
+	ShutdownTimeout    time.Duration
+	HealthTimeout      time.Duration
+	LogLevel           string
+	OutboxBatchSize    int32
+	OutboxPollInterval time.Duration
+	OutboxLease        time.Duration
+	OutboxPublish      time.Duration
 }
 
 // Load reads and validates the process environment.
@@ -40,12 +44,16 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 	}
 
 	config := Config{
-		ServiceName:     valueOr(lookup, "SERVICE_NAME", "wallet"),
-		InstanceName:    valueOr(lookup, "INSTANCE_NAME", "wallet-source"),
-		HTTPAddr:        valueOr(lookup, "HTTP_ADDR", ":8080"),
-		ShutdownTimeout: durationOr(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second),
-		HealthTimeout:   durationOr(lookup, "HEALTH_TIMEOUT", 2*time.Second),
-		LogLevel:        strings.ToLower(valueOr(lookup, "LOG_LEVEL", "info")),
+		ServiceName:        valueOr(lookup, "SERVICE_NAME", "wallet"),
+		InstanceName:       valueOr(lookup, "INSTANCE_NAME", "wallet-source"),
+		HTTPAddr:           valueOr(lookup, "HTTP_ADDR", ":8080"),
+		ShutdownTimeout:    durationOr(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second),
+		HealthTimeout:      durationOr(lookup, "HEALTH_TIMEOUT", 2*time.Second),
+		LogLevel:           strings.ToLower(valueOr(lookup, "LOG_LEVEL", "info")),
+		OutboxBatchSize:    int32Or(lookup, "OUTBOX_RELAY_BATCH_SIZE", int32Or(lookup, "OUTBOX_BATCH_SIZE", 50)),
+		OutboxPollInterval: durationOr(lookup, "OUTBOX_RELAY_POLL_INTERVAL", durationOr(lookup, "OUTBOX_POLL_INTERVAL", 250*time.Millisecond)),
+		OutboxLease:        durationOr(lookup, "OUTBOX_RELAY_LEASE", durationOr(lookup, "OUTBOX_LEASE", 5*time.Second)),
+		OutboxPublish:      durationOr(lookup, "OUTBOX_PUBLISH_TIMEOUT", 2*time.Second),
 	}
 	config.DatabaseURL, _ = lookup("DATABASE_URL")
 	config.NATSURL, _ = lookup("NATS_URL")
@@ -71,6 +79,21 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 	}
 	if config.HealthTimeout <= 0 {
 		problems = append(problems, "HEALTH_TIMEOUT must be greater than zero")
+	}
+	if config.OutboxBatchSize <= 0 {
+		problems = append(problems, "OUTBOX_BATCH_SIZE must be greater than zero")
+	}
+	if config.OutboxPollInterval <= 0 {
+		problems = append(problems, "OUTBOX_POLL_INTERVAL must be greater than zero")
+	}
+	if config.OutboxLease <= 0 {
+		problems = append(problems, "OUTBOX_LEASE must be greater than zero")
+	}
+	if config.OutboxPublish <= 0 {
+		problems = append(problems, "OUTBOX_PUBLISH_TIMEOUT must be greater than zero")
+	}
+	if config.OutboxLease > 0 && config.OutboxPublish > 0 && config.OutboxLease <= config.OutboxPublish {
+		problems = append(problems, "OUTBOX_LEASE must be greater than OUTBOX_PUBLISH_TIMEOUT")
 	}
 	if !map[string]bool{"debug": true, "info": true, "warn": true, "error": true}[config.LogLevel] {
 		problems = append(problems, "LOG_LEVEL must be one of debug, info, warn, error")
@@ -98,6 +121,18 @@ func durationOr(lookup LookupFunc, key string, fallback time.Duration) time.Dura
 		return 0
 	}
 	return parsed
+}
+
+func int32Or(lookup LookupFunc, key string, fallback int32) int32 {
+	value, ok := lookup(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int32(parsed)
 }
 
 func validateURL(name, value string, schemes map[string]bool) error {

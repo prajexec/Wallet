@@ -11,6 +11,7 @@ import (
 type Querier interface {
 	AcquireIdempotencyLock(ctx context.Context, arg AcquireIdempotencyLockParams) error
 	AcquireWalletLock(ctx context.Context, arg AcquireWalletLockParams) error
+	ClaimOutboxMessages(ctx context.Context, arg ClaimOutboxMessagesParams) ([]ClaimOutboxMessagesRow, error)
 	GetAccountBalance(ctx context.Context, arg GetAccountBalanceParams) (int64, error)
 	GetAccountByName(ctx context.Context, arg GetAccountByNameParams) (Account, error)
 	GetIdempotencyRecord(ctx context.Context, arg GetIdempotencyRecordParams) (IdempotencyRecord, error)
@@ -22,11 +23,13 @@ type Querier interface {
 	InsertIdempotencyRecord(ctx context.Context, arg InsertIdempotencyRecordParams) (int64, error)
 	InsertJournalPosting(ctx context.Context, arg InsertJournalPostingParams) error
 	InsertJournalTransaction(ctx context.Context, arg InsertJournalTransactionParams) (JournalTransaction, error)
-	InsertOutboxMessage(ctx context.Context, arg InsertOutboxMessageParams) (OutboxMessage, error)
+	InsertOutboxMessage(ctx context.Context, arg InsertOutboxMessageParams) (InsertOutboxMessageRow, error)
 	InsertWallet(ctx context.Context, arg InsertWalletParams) (Wallet, error)
 	ListPostingsForAccount(ctx context.Context, arg ListPostingsForAccountParams) ([]JournalPosting, error)
 	ListWalletEntries(ctx context.Context, arg ListWalletEntriesParams) ([]ListWalletEntriesRow, error)
 	ListWalletEntriesBefore(ctx context.Context, arg ListWalletEntriesBeforeParams) ([]ListWalletEntriesBeforeRow, error)
+	MarkOutboxFailed(ctx context.Context, arg MarkOutboxFailedParams) (int64, error)
+	MarkOutboxPublished(ctx context.Context, arg MarkOutboxPublishedParams) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

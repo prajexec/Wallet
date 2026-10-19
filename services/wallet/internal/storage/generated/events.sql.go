@@ -12,6 +12,80 @@ import (
 	identifiers "digitalwallet/shared/identifiers"
 )
 
+const claimOutboxMessages = `-- name: ClaimOutboxMessages :many
+WITH candidates AS (
+    SELECT o.tenant_id, o.id
+    FROM outbox_messages AS o
+    WHERE o.published_at IS NULL
+      AND o.next_attempt_at <= now()
+      AND (o.locked_until IS NULL OR o.locked_until < now())
+    ORDER BY o.created_at, o.id
+    LIMIT $1
+    FOR UPDATE OF o SKIP LOCKED
+), claimed AS (
+    UPDATE outbox_messages AS o
+    SET locked_until = $2
+    FROM candidates AS c
+    WHERE o.tenant_id = c.tenant_id
+      AND o.id = c.id
+    RETURNING o.tenant_id, o.id, o.event_id, o.created_at, o.attempts, o.locked_until
+)
+SELECT c.tenant_id, c.id, c.event_id, c.created_at, c.attempts, c.locked_until,
+       e.aggregate_type, e.event_type, e.payload
+FROM claimed AS c
+JOIN events AS e
+  ON e.tenant_id = c.tenant_id
+ AND e.event_id = c.event_id
+ORDER BY c.created_at, c.id
+`
+
+type ClaimOutboxMessagesParams struct {
+	Limit       int32      `db:"limit"`
+	LockedUntil *time.Time `db:"locked_until"`
+}
+
+type ClaimOutboxMessagesRow struct {
+	TenantID      identifiers.UUID `db:"tenant_id"`
+	ID            identifiers.UUID `db:"id"`
+	EventID       identifiers.UUID `db:"event_id"`
+	CreatedAt     time.Time        `db:"created_at"`
+	Attempts      int32            `db:"attempts"`
+	LockedUntil   *time.Time       `db:"locked_until"`
+	AggregateType string           `db:"aggregate_type"`
+	EventType     string           `db:"event_type"`
+	Payload       []byte           `db:"payload"`
+}
+
+func (q *Queries) ClaimOutboxMessages(ctx context.Context, arg ClaimOutboxMessagesParams) ([]ClaimOutboxMessagesRow, error) {
+	rows, err := q.db.Query(ctx, claimOutboxMessages, arg.Limit, arg.LockedUntil)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimOutboxMessagesRow
+	for rows.Next() {
+		var i ClaimOutboxMessagesRow
+		if err := rows.Scan(
+			&i.TenantID,
+			&i.ID,
+			&i.EventID,
+			&i.CreatedAt,
+			&i.Attempts,
+			&i.LockedUntil,
+			&i.AggregateType,
+			&i.EventType,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNextAggregateVersion = `-- name: GetNextAggregateVersion :one
 SELECT (COALESCE(MAX(aggregate_version), 0) + 1)::bigint AS next_version
 FROM events
@@ -105,7 +179,17 @@ type InsertOutboxMessageParams struct {
 	NextAttemptAt time.Time        `db:"next_attempt_at"`
 }
 
-func (q *Queries) InsertOutboxMessage(ctx context.Context, arg InsertOutboxMessageParams) (OutboxMessage, error) {
+type InsertOutboxMessageRow struct {
+	TenantID      identifiers.UUID `db:"tenant_id"`
+	ID            identifiers.UUID `db:"id"`
+	EventID       identifiers.UUID `db:"event_id"`
+	CreatedAt     time.Time        `db:"created_at"`
+	PublishedAt   *time.Time       `db:"published_at"`
+	Attempts      int32            `db:"attempts"`
+	NextAttemptAt time.Time        `db:"next_attempt_at"`
+}
+
+func (q *Queries) InsertOutboxMessage(ctx context.Context, arg InsertOutboxMessageParams) (InsertOutboxMessageRow, error) {
 	row := q.db.QueryRow(ctx, insertOutboxMessage,
 		arg.TenantID,
 		arg.ID,
@@ -115,7 +199,7 @@ func (q *Queries) InsertOutboxMessage(ctx context.Context, arg InsertOutboxMessa
 		arg.Attempts,
 		arg.NextAttemptAt,
 	)
-	var i OutboxMessage
+	var i InsertOutboxMessageRow
 	err := row.Scan(
 		&i.TenantID,
 		&i.ID,
@@ -126,4 +210,69 @@ func (q *Queries) InsertOutboxMessage(ctx context.Context, arg InsertOutboxMessa
 		&i.NextAttemptAt,
 	)
 	return i, err
+}
+
+const markOutboxFailed = `-- name: MarkOutboxFailed :execrows
+UPDATE outbox_messages
+SET attempts = attempts + 1,
+    last_error = $4,
+    next_attempt_at = $5,
+    locked_until = NULL
+WHERE tenant_id = $1
+  AND id = $2
+  AND published_at IS NULL
+  AND locked_until = $3
+`
+
+type MarkOutboxFailedParams struct {
+	TenantID      identifiers.UUID `db:"tenant_id"`
+	ID            identifiers.UUID `db:"id"`
+	LockedUntil   *time.Time       `db:"locked_until"`
+	LastError     *string          `db:"last_error"`
+	NextAttemptAt time.Time        `db:"next_attempt_at"`
+}
+
+func (q *Queries) MarkOutboxFailed(ctx context.Context, arg MarkOutboxFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markOutboxFailed,
+		arg.TenantID,
+		arg.ID,
+		arg.LockedUntil,
+		arg.LastError,
+		arg.NextAttemptAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markOutboxPublished = `-- name: MarkOutboxPublished :execrows
+UPDATE outbox_messages
+SET published_at = $3,
+    locked_until = NULL,
+    last_error = NULL
+WHERE tenant_id = $1
+  AND id = $2
+  AND published_at IS NULL
+  AND locked_until = $4
+`
+
+type MarkOutboxPublishedParams struct {
+	TenantID    identifiers.UUID `db:"tenant_id"`
+	ID          identifiers.UUID `db:"id"`
+	PublishedAt *time.Time       `db:"published_at"`
+	LockedUntil *time.Time       `db:"locked_until"`
+}
+
+func (q *Queries) MarkOutboxPublished(ctx context.Context, arg MarkOutboxPublishedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markOutboxPublished,
+		arg.TenantID,
+		arg.ID,
+		arg.PublishedAt,
+		arg.LockedUntil,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

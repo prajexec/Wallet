@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"digitalwallet/services/wallet/internal/config"
+	"digitalwallet/services/wallet/internal/relay"
 	"digitalwallet/services/wallet/internal/repository"
 	"digitalwallet/services/wallet/internal/server"
 	"digitalwallet/shared/identifiers"
@@ -43,6 +44,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer natsConnection.Close()
+	jetStream, err := natsConnection.JetStream()
+	if err != nil {
+		logger.Error("create JetStream context", "error", err)
+		os.Exit(1)
+	}
 
 	ids := identifiers.NewGenerator()
 	store := repository.New(database, ids, cfg.InstanceName)
@@ -55,6 +61,18 @@ func main() {
 
 	rootContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	outboxRelay := relay.New(database, jetStream, relay.Config{
+		BatchSize:      cfg.OutboxBatchSize,
+		PollInterval:   cfg.OutboxPollInterval,
+		LeaseDuration:  cfg.OutboxLease,
+		PublishTimeout: cfg.OutboxPublish,
+		Logger:         logger,
+	})
+	go func() {
+		if err := outboxRelay.Run(rootContext); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("wallet outbox relay stopped", "error", err)
+		}
+	}()
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- httpServer.ListenAndServe()
@@ -69,6 +87,10 @@ func main() {
 	case <-rootContext.Done():
 		shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
+		if err := outboxRelay.Stop(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("shutdown wallet outbox relay", "error", err)
+			os.Exit(1)
+		}
 		if err := httpServer.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("shutdown HTTP server", "error", err)
 			os.Exit(1)
