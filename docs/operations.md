@@ -1,6 +1,6 @@
 # Operations
 
-This document is the operational contract. Executable Compose files, migrations, service CLIs, and environment validation are introduced in Phase 2 and must keep this interface current.
+This document is the operational contract for the Phase 2 local foundation. The Compose file and service startup validation are executable; business tables, CLIs, and service behavior are intentionally deferred to their implementation phases.
 
 ## Local deployment
 
@@ -14,11 +14,16 @@ flowchart TB
         WD[wallet-destination]
         TS[transfer]
         PS[projector]
-        DBW1[(postgres-wallet-source)]
-        DBW2[(postgres-wallet-destination)]
-        DBT[(postgres-transfer)]
-        DBR[(postgres-read)]
+        DB[(PostgreSQL container)]
+        DBW1[(wallet_source database)]
+        DBW2[(wallet_destination database)]
+        DBT[(transfer database)]
+        DBR[(read database)]
     end
+    DB --> DBW1
+    DB --> DBW2
+    DB --> DBT
+    DB --> DBR
     WS --> DBW1
     WD --> DBW2
     TS --> DBT
@@ -32,6 +37,38 @@ flowchart TB
 ```
 
 `wallet-source` and `wallet-destination` use the same binary and separate database URLs/roles. The transfer role has no grants on either wallet database. The projector role has no write access to wallet or transfer source schemas.
+
+## Run locally
+
+Requirements: Go 1.23 or newer, Docker Engine/Desktop with the Compose v2 plugin, Node.js/npm for the documentation validator, and a shell with Bash.
+
+```text
+make up
+make migrate
+curl http://localhost:8081/healthz
+curl http://localhost:8081/readyz
+make role-isolation
+make down
+```
+
+`make up` builds the three multi-stage service images and starts PostgreSQL, NATS JetStream, `wallet-source`, `wallet-destination`, `transfer`, and `projector`. Compose healthchecks wait for PostgreSQL/NATS before starting the services and each service healthcheck calls `/readyz`.
+
+## Environment variables
+
+Compose supplies the following local values. In another environment, set equivalent values without committing credentials.
+
+| Variable | wallet instances | transfer | projector | Validation |
+| --- | --- | --- | --- | --- |
+| `SERVICE_NAME` | `wallet` | `transfer` | `projector` | Required logical service identity. |
+| `INSTANCE_NAME` | `wallet-source` / `wallet-destination` | `transfer` | `projector` | Required logical instance identity. |
+| `HTTP_ADDR` | `:8080` | `:8080` | `:8080` | Listener address. |
+| `DATABASE_URL` | `postgres://.../wallet_source` or `wallet_destination` | `postgres://.../transfer` | `postgres://.../read` | PostgreSQL URL with a service-specific role. |
+| `NATS_URL` | `nats://nats:4222` | `nats://nats:4222` | `nats://nats:4222` | NATS URL; required for readiness. |
+| `LOG_LEVEL` | `info` | `info` | `info` | `debug`, `info`, `warn`, or `error`. |
+| `HEALTH_TIMEOUT` | default `2s` | default `2s` | default `2s` | Positive readiness-check timeout. |
+| `SHUTDOWN_TIMEOUT` | default `10s` | default `10s` | default `10s` | Positive graceful-shutdown timeout. |
+
+The database passwords in `deploy/docker-compose.yml` and `deploy/postgres/init/001-roles-and-databases.sql` are local-only development credentials.
 
 ## Configuration contract
 
@@ -48,7 +85,17 @@ The exact names become `.env.example` in Phase 2. Required configuration groups 
 
 ## Migrations and startup
 
-Migrations run per database and per service role. Startup verifies schema version and fails closed when required migrations are missing. A migration may add constraints or tables but must not rewrite immutable journal history. Rollbacks that could destroy evidence are not automatic.
+Phase 2 uses Goose through the `GOOSE_VERSION`-pinned `go run` command in the Makefile. Wallet source and destination both use `migrations/wallet`; transfer uses `migrations/transfer`; projector/read uses `migrations/projector`.
+
+```text
+make migrate-wallet-source
+make migrate-wallet-destination
+make migrate-transfer
+make migrate-read
+make migrate
+```
+
+Each directory currently contains only an empty baseline migration. Service startup validates connectivity but does not silently run migrations. A migration may add constraints or tables but must not rewrite immutable journal history. Rollbacks that could destroy evidence are not automatic.
 
 ## Planned CLIs
 
@@ -70,3 +117,4 @@ Migrations run per database and per service role. Startup verifies schema versio
 - Outbox backlog: inspect oldest row, relay errors, NATS health, and database locks; do not delete rows to reduce lag.
 - Projection checksum failure: keep the active version, retain failed rebuild evidence, and investigate source events.
 - Negative available balance or journal imbalance: stop affected writes, page, and run replay/reconciliation; never insert an adjustment row outside the domain command.
+- `make role-isolation` fails: ensure the Compose PostgreSQL volume was initialized with the role script; a pre-existing volume does not rerun init scripts, so use `make down` followed by `docker compose -f deploy/docker-compose.yml down -v` only for disposable local data.

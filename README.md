@@ -69,15 +69,25 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 7. Reconciliation and operations tooling.
 8. Contention-first benchmarks.
 
-## Quickstart status
+## Quickstart
 
-Phase 1 defines the contracts only. The executable `docker compose up` quickstart and Go commands will be added in Phase 2 without changing the locked contracts. Once the foundation exists, the expected flow will be:
+Phase 2 provides a runnable local foundation. From the repository root:
 
 ```text
-cp .env.example .env
-docker compose up --build
+make up
 make migrate
 ```
+
+The service health endpoints are:
+
+| Service | URL |
+| --- | --- |
+| wallet-source | <http://localhost:8081/readyz> |
+| wallet-destination | <http://localhost:8082/readyz> |
+| transfer | <http://localhost:8083/readyz> |
+| projector | <http://localhost:8084/readyz> |
+
+Stop the local stack with `make down`. The Compose credentials are local-development values only; do not reuse them outside the local stack.
 
 ## Phase 1 acceptance
 
@@ -85,3 +95,9 @@ make migrate
 - Required Mermaid diagrams are included in the relevant documents.
 - Public and internal endpoint shapes, idempotency semantics, event ordering, saga failure handling, and projection rebuild protocol are written down before implementation.
 - No application dependencies, generated code, credentials, or unverified runtime claims are included in this phase.
+
+## Phase 2 foundation
+
+- The Go workspace contains the shared contract module and three service modules.
+- Local Compose starts one PostgreSQL server with four isolated databases, NATS JetStream, two wallet instances, transfer, and projector.
+- Runtime readiness probes PostgreSQL and NATS; migrations are explicit and wallet tables remain deferred to Phase 3.

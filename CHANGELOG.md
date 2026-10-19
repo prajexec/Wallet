@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [Phase 2 — Repository foundation] — 2026-10-19
+
+### Added
+
+- Added the four-module Go workspace and shared UUIDv7, integer-money, event-envelope, and HTTP-error contracts.
+- Added service configuration validation, structured request logging, request/correlation IDs, graceful shutdown, `/healthz`, and dependency-aware `/readyz` endpoints.
+- Added Docker Compose for PostgreSQL, NATS JetStream, two wallet instances, transfer, and projector, with service-specific database roles and baseline migrations.
+- Added import-boundary checks, deliberate-violation coverage, role-isolation integration coverage, Make targets, and GitHub Actions CI.
+
+### Verification
+
+- Phase 2 implementation checks are recorded in the final phase report; business tables and migration content remain deferred to later phases.
+
 ## [Phase 1 — Contracts and documentation] — 2026-10-19
 
 ### Added

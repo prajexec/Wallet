@@ -37,21 +37,21 @@ flowchart TB
         Saga[Saga orchestrator]
         TransferRepo[Transfer repository]
         TransferOutbox[Transfer outbox relay]
-        TransferDB[(Transfer PostgreSQL DB)]
+        TransferDB[(transfer database)]
     end
     subgraph WalletSource[wallet service instance: source]
         SourceAPI[HTTP API]
         SourceCommand[Command handler]
         SourceJournal[Journal repository]
         SourceOutbox[Outbox relay]
-        SourceDB[(Wallet source PostgreSQL DB)]
+        SourceDB[(wallet_source database)]
     end
     subgraph WalletDestination[wallet service instance: destination]
         DestinationAPI[HTTP API]
         DestinationCommand[Command handler]
         DestinationJournal[Journal repository]
         DestinationOutbox[Outbox relay]
-        DestinationDB[(Wallet destination PostgreSQL DB)]
+        DestinationDB[(wallet_destination database)]
     end
     NATS[(NATS JetStream)]
     subgraph ProjectorService[projector service module]
@@ -59,7 +59,7 @@ flowchart TB
         Ordering[Aggregate ordering + gap detector]
         Projector[Projection workers]
         Rebuilder[Rebuild / promotion CLI]
-        ReadDB[(Read PostgreSQL DB)]
+        ReadDB[(read database)]
     end
 
     Caller --> TransferAPI
@@ -80,6 +80,8 @@ flowchart TB
 ```
 
 The dashed relationship is a boundary rule, not a network connection. The transfer module may call wallet HTTP/internal APIs and consume contract events, but it must not import wallet storage packages or query wallet tables.
+
+The Phase 2 Compose deployment uses one PostgreSQL container with four databases (`wallet_source`, `wallet_destination`, `transfer`, and `read`) and four database roles. This is a local-development topology only; service role grants remain database-scoped and the transfer role has no `CONNECT` privilege on either wallet database.
 
 ## Responsibilities and ownership
 
