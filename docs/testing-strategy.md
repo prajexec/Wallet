@@ -38,6 +38,16 @@ Correctness tests are layered so that a fast unit suite catches accounting and s
 20. Verify wallet creation emits aggregate version 1 and later wallet events are contiguous.
 21. Verify service roles cannot connect across databases or alter wallet schema objects, disable journal triggers, drop journal triggers/tables, or update journal postings.
 22. Verify wallet `/readyz` is HTTP 200/degraded when only NATS is unavailable and HTTP 503 when PostgreSQL is unavailable.
+23. Commit a wallet mutation while NATS is stopped, restart NATS, and verify the relay drains the outbox into JetStream.
+24. Inject a relay crash after PubAck and before mark; verify lease expiry/republication, JetStream message deduplication, and inbox deduplication with a bypassed message ID.
+25. Run two relays concurrently and verify no outbox lease is held by both at once and every row is eventually published.
+26. Crash the projector consumer before ACK; verify redelivery has no second applied effect.
+27. Deliver versions 3, 1, and 2 out of order; verify durable buffering and applied order 1, 2, 3.
+28. Leave a missing predecessor past the gap window; verify `ordering_gaps`, then fill the gap and verify buffered drain.
+29. Restart the projector with buffered events and verify they survive in PostgreSQL.
+30. Deliver a poison event until `MaxDeliver`; verify `dead_letter_events` is written before ACK.
+31. Duplicate N events and verify exactly N `applied_events_log` rows.
+32. Run the end-to-end wallet flow with relays and projector enabled; compare journal event totals with applied-event totals.
 
 ## State-machine/property test
 
@@ -62,6 +72,8 @@ every idempotency key has at most one monetary effect
 ```
 
 The Phase 3 integration suite is run with `-race` against the Compose PostgreSQL instance. Tests skip only when the explicit integration database URL is absent from ordinary unit runs; `make test-integration` supplies it and fails on any integration error. The migration target uses the owner-only migrator URL while the suite connects as the wallet runtime role.
+
+Phase 4 adds real NATS JetStream integration and randomized ordering tests. Failure-injection tests use deterministic failpoint hooks that are unreachable unless explicitly enabled by the test harness.
 
 ## Go checks
 

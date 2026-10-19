@@ -72,6 +72,8 @@ erDiagram
         timestamp published_at
         int attempts
         timestamp next_attempt_at
+        timestamp locked_until
+        string last_error
     }
     idempotency_records {
         uuid tenant_id PK,FK
@@ -90,7 +92,7 @@ erDiagram
 
 ```mermaid
 flowchart TD
-    Begin[Begin wallet transaction] --> Lock[SELECT wallet/account FOR UPDATE]
+    Begin[Begin wallet transaction] --> Lock[pg_advisory_xact_lock tenant + wallet]
     Lock --> Idempotency{Existing tenant + key?}
     Idempotency -->|same request hash| Replay[Return stored response]
     Idempotency -->|different hash| Conflict[Return 422 idempotency conflict]
@@ -182,12 +184,15 @@ The transfer database contains references to wallet IDs and operation IDs, not w
 
 ```mermaid
 erDiagram
-    projection_versions ||--o{ projection_cursors : selects
+    projection_versions ||--o{ aggregate_cursors : selects
     projection_versions ||--o{ wallet_balance_view : materializes
     projection_versions ||--o{ wallet_entry_view : materializes
     projection_versions ||--o{ transfer_view : materializes
-    inbox_events ||--o{ projection_cursors : advances
-    reorder_buffer ||--o{ inbox_events : awaits
+    inbox_messages ||--o{ aggregate_cursors : advances
+    buffered_events ||--o{ inbox_messages : awaits
+    ordering_gaps ||--o{ buffered_events : detects
+    dead_letter_events ||--o{ inbox_messages : records
+    applied_events_log ||--o{ inbox_messages : applies
 
     projection_versions {
         uuid tenant_id PK,FK
@@ -196,15 +201,7 @@ erDiagram
         int previous_version
         bigint promoted_watermark
     }
-    projection_cursors {
-        uuid tenant_id PK
-        string consumer_name PK
-        string projection_name PK
-        uuid aggregate_id PK
-        bigint current_version
-        timestamp updated_at
-    }
-    inbox_events {
+    inbox_messages {
         uuid tenant_id PK
         string consumer_name PK
         uuid event_id PK
@@ -212,14 +209,45 @@ erDiagram
         bigint aggregate_version
         timestamp received_at
     }
-    reorder_buffer {
+    aggregate_cursors {
         uuid tenant_id PK
         string consumer_name PK
-        string projection_name PK
+        uuid aggregate_id PK
+        bigint last_version
+        timestamp updated_at
+    }
+    buffered_events {
+        uuid tenant_id PK
+        string consumer_name PK
         uuid aggregate_id PK
         bigint aggregate_version PK
-        jsonb event_payload
+        uuid event_id
+        jsonb payload
         timestamp first_seen_at
+    }
+    ordering_gaps {
+        uuid tenant_id PK
+        string consumer_name PK
+        uuid aggregate_id PK
+        bigint expected_version PK
+        string status
+        timestamp first_seen_at
+    }
+    dead_letter_events {
+        uuid tenant_id PK
+        string consumer_name PK
+        uuid event_id PK
+        string error
+        jsonb payload
+        timestamp created_at
+    }
+    applied_events_log {
+        uuid tenant_id PK
+        string consumer_name PK
+        uuid event_id PK
+        uuid aggregate_id
+        bigint aggregate_version
+        timestamp applied_at
     }
     wallet_balance_view {
         int projection_version PK

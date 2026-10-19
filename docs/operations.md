@@ -1,6 +1,6 @@
 # Operations
 
-This document is the operational contract for the local foundation and Phase 3 wallet hardening. The Compose file, migration targets, and role-isolation checks are executable.
+This document is the operational contract for the local foundation, Phase 3 wallet hardening, and Phase 4 delivery. The Compose file, migration targets, role-isolation checks, relay, projector consumer, and stats endpoint are executable.
 
 ## Local deployment
 
@@ -69,6 +69,13 @@ Compose supplies the following local values. In another environment, set equival
 | `HEALTH_TIMEOUT` | default `2s` | default `2s` | default `2s` | Positive readiness-check timeout. |
 | `SHUTDOWN_TIMEOUT` | default `10s` | default `10s` | default `10s` | Positive graceful-shutdown timeout. |
 | `WALLET_TEST_DATABASE_URL` | integration tests only | N/A | N/A | PostgreSQL URL used by the real wallet integration suite. |
+| `OUTBOX_RELAY_BATCH_SIZE` | default `50` | N/A | N/A | Maximum rows claimed per relay batch. |
+| `OUTBOX_RELAY_POLL_INTERVAL` | default `250ms` | N/A | N/A | Delay between empty relay polls. |
+| `OUTBOX_RELAY_LEASE` | default `5s` | N/A | N/A | Claim lease; longer than the bounded publish timeout. |
+| `OUTBOX_PUBLISH_TIMEOUT` | default `2s` | N/A | N/A | Maximum NATS publish/PubAck wait. |
+| `NATS_STREAM` | `WALLET_EVENTS` | `WALLET_EVENTS` | `WALLET_EVENTS` | File-backed event stream name. |
+| `NATS_CONSUMER` | N/A | N/A | `projector` | Durable projector pull consumer name. |
+| `ORDERING_GAP_WINDOW` | N/A | N/A | default `30s` | Missing predecessor window before an ordering gap row/alert. |
 
 The database passwords in `deploy/docker-compose.yml` and `deploy/postgres/init/001-roles-and-databases.sql` are local-only development credentials.
 
@@ -102,6 +109,24 @@ The wallet directory contains the Phase 3 ledger and owner-separation migrations
 For a fresh local volume, the init script creates `migrator_role` and makes it the owner of all four databases. For an existing deployment, a PostgreSQL administrator must transfer database/schema/object ownership to the migrator before applying the owner-separation migration; the migration cannot take ownership of objects owned by an unrelated role. Local validation can reset disposable state with `docker compose -f deploy/docker-compose.yml down -v` before `make up`.
 
 The wallet service has `SELECT`/`INSERT` access to wallet tables and no UPDATE on accounts, wallets, immutable journal/event tables, or idempotency records. Wallet writes serialize with a transaction-scoped advisory lock; same-key idempotency requests insert one completed response.
+
+## Phase 4 delivery and stats
+
+The wallet process relays its own committed outbox rows. It claims with `FOR UPDATE SKIP LOCKED` and a short `locked_until` lease, publishes outside the claim transaction, and marks `published_at` only after a JetStream PubAck. The projector bootstraps the `WALLET_EVENTS` stream and its durable explicit-ACK pull consumer idempotently at startup.
+
+The stream contract is:
+
+| Setting | Value | Reason |
+| --- | --- | --- |
+| Subjects | `events.>` | Tenant/aggregate/event routing without global FIFO assumptions. |
+| Storage | File | Durable local delivery for Compose and replay. |
+| Duplicate window | `2m` | Covers relay lease expiry/retry duplicates. |
+| Consumer | durable `projector`, pull, explicit ACK | Backpressure and ACK-after-DB-commit. |
+| `AckWait` | `30s` | Exceeds normal DB transaction time while allowing redelivery. |
+| `MaxDeliver` | `5` | Poison-event bound before dead-letter recording. |
+| `MaxAckPending` | `100` | Bounded projector in-flight work. |
+
+The internal stats endpoint is `GET /internal/v1/stats` on wallet and projector services. It reports unpublished outbox count, oldest unpublished age, attempts histogram, buffered-event count, open gaps, and dead-letter count. It is operationally protected by the local service boundary; Prometheus is deferred to Phase 8.
 
 ## Planned CLIs
 

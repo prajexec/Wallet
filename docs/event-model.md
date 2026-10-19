@@ -57,6 +57,16 @@ Events are durable integration contracts. They are emitted only after the owning
 
 Payloads must include `amount_minor` and `currency` for monetary events. A monetary payload's amount is never a floating-point number. Event names describe facts, not commands.
 
+## Subjects and JetStream mapping
+
+Every envelope maps to a NATS subject:
+
+```text
+events.<tenant_id>.<aggregate_type>.<event_type>
+```
+
+The event ID is published as `Nats-Msg-Id`. A `WALLET_EVENTS` file-backed stream subscribes to `events.>` with a two-minute duplicate window. Subject routing is operational filtering only; the envelope's tenant, aggregate ID, and aggregate version remain the ordering contract.
+
 ## Ordering, duplication, and gaps
 
 NATS subjects are partitioned by event type and tenant/aggregate identity as a routing aid, not as the correctness mechanism. Consumers use `(tenant_id, consumer_name, event_id)` in an inbox table as the deduplication backstop.
@@ -69,4 +79,4 @@ For each `(tenant_id, consumer_name, aggregate_id)`:
 4. start a gap timer for a missing version;
 5. after the timeout, raise a gap alert and keep the event available for replay/manual inspection.
 
-The consumer acknowledges NATS only after its inbox insert, projection mutation, and cursor update commit in one database transaction. Redelivery after a crash is therefore harmless.
+The consumer acknowledges NATS only after its inbox insert, projection mutation, cursor update, and any buffer changes commit in one database transaction. Redelivery after a crash is therefore harmless. A future event is durable in `buffered_events`, not an in-memory queue. A sweeper writes one deduplicated `ordering_gaps` row after the configured missing-version window; it never skips or fabricates a version. A poison message is retained in `dead_letter_events` after the consumer's `MaxDeliver` limit.

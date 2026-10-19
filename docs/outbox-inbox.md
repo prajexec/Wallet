@@ -18,11 +18,12 @@ sequenceDiagram
     API->>DB: append journal/aggregate + domain event
     API->>DB: INSERT outbox(event_id, payload, status=pending)
     API->>DB: COMMIT
-    O->>DB: SELECT ... FOR UPDATE SKIP LOCKED
-    DB-->>O: claim one or more pending rows
+    O->>DB: short claim tx: SELECT ... SKIP LOCKED
+    DB-->>O: claim rows and set locked_until
+    O->>DB: COMMIT claim
     O->>N: publish(subject, Nats-Msg-Id=event_id)
     N-->>O: publish ACK
-    O->>DB: mark outbox delivered/attempt metadata
+    O->>DB: mark published_at / clear lease
     N->>C: deliver event
     C->>I: BEGIN and insert inbox key
     C->>I: apply projection and cursor atomically
@@ -40,14 +41,16 @@ There is no global FIFO guarantee. Multiple relays may claim rows concurrently. 
 
 ## Relay algorithm
 
-1. Start a short transaction.
-2. Select pending or retryable rows with `FOR UPDATE SKIP LOCKED`, ordered by `available_at, created_at`, and mark an attempt/lease.
-3. Commit the claim so another relay does not publish the same lease concurrently.
-4. Publish with `Nats-Msg-Id = event_id`.
-5. On publish ACK, mark delivered. On failure, clear or expire the lease and schedule bounded backoff.
-6. Do not delete the row immediately; retain delivery metadata for inspection and replay policy.
+1. Start a short claim transaction.
+2. Select `published_at IS NULL` and `next_attempt_at <= now()` rows where `locked_until IS NULL OR locked_until < now()`, with `FOR UPDATE SKIP LOCKED`, ordered by `created_at, id`.
+3. Set `locked_until = now() + relay lease` and commit. No row lock crosses a network call.
+4. Publish with `Nats-Msg-Id = event_id` and wait for the JetStream PubAck.
+5. On PubAck, set `published_at` and clear `locked_until`. On failure, increment `attempts`, store `last_error`, clear the lease, and schedule exponential backoff with bounded jitter.
+6. Do not delete the row; retain delivery metadata for inspection and replay.
 
-The lease is an operational coordination field, not the correctness mechanism. If a process dies after publish and before marking delivered, the duplicate publish is safe because the message ID and inbox key are stable.
+The lease is an operational coordination field, not the correctness mechanism. If a process dies after publish and before marking delivered, the lease expires and the event is republished with the same `Nats-Msg-Id`; JetStream duplicate suppression and the consumer inbox make this safe. A publish timeout is not treated as proof that the message was absent.
+
+The relay uses a bounded publish timeout shorter than the lease. Two relays can claim different rows concurrently; `SKIP LOCKED` prevents the same non-expired lease from being claimed twice.
 
 ## Consumer algorithm and gap detection
 
@@ -58,11 +61,11 @@ flowchart TD
     Inbox -->|no| Version{event version vs current}
     Version -->|current + 1| Apply[Insert inbox + apply projection + advance cursor]
     Version -->|<= current| MarkApplied[Insert inbox as already applied; ACK]
-    Version -->|> current + 1| Buffer[Persist reorder buffer row]
-    Buffer --> Timer[Start / refresh gap timer]
+    Version -->|> current + 1| Buffer[Persist buffered_events row]
+    Buffer --> Timer[Persist first_seen_at / refresh gap timer]
     Timer --> Gap{Gap timeout elapsed?}
     Gap -->|no| Wait[Wait for missing version]
-    Gap -->|yes| Alert[Raise gap alert; keep event for replay]
+    Gap -->|yes| Alert[Insert ordering_gaps; alert; keep event]
     Apply --> Drain[Drain buffered current + 1 events]
     Drain --> Ack[Commit then ACK]
     AckDuplicate --> End[Done]
@@ -72,7 +75,7 @@ flowchart TD
     Ack --> End
 ```
 
-The inbox key is `(tenant_id, consumer_name, event_id)`. Aggregate ordering state is keyed by `(tenant_id, consumer_name, aggregate_id)`. A consumer never advances a cursor over an unresolved gap.
+The inbox key is `(tenant_id, consumer_name, event_id)`. Aggregate ordering state is keyed by `(tenant_id, consumer_name, aggregate_id)`. A consumer never advances a cursor over an unresolved gap. After `MaxDeliver`, the consumer stores the poison event and error in `dead_letter_events` before acknowledging it.
 
 ## Crash scenarios
 
