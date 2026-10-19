@@ -266,6 +266,40 @@ func TestUnbalancedTransactionRejectedAtCommit(t *testing.T) {
 	}
 }
 
+func TestAppendingPostingToExistingTransactionIsDeferredAndValidated(t *testing.T) {
+	tenantID := tenant(t)
+	wallet, _ := createWallet(t, tenantID, "create-existing-transaction-validation")
+	result, err := testRepo.Deposit(context.Background(), tenantID, wallet.WalletID, "existing-transaction", hashMoney(t, 5), 5, "existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response repository.JournalCommandResponse
+	if err := json.Unmarshal(result.Body, &response); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	postingID, _ := identifiers.NewUUIDv7()
+	_, err = tx.Exec(context.Background(), `INSERT INTO journal_postings (tenant_id, id, transaction_id, account_id, side, amount_minor, currency, entry_type, created_at) VALUES ($1, $2, $3, $4, 'DEBIT', 1, 'USD', 'validation-regression', now())`, tenantID, postingID, response.JournalTransactionID, wallet.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(context.Background()); err == nil {
+		t.Fatal("unbalanced posting appended to existing transaction committed")
+	}
+
+	var postingCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT COUNT(*) FROM journal_postings WHERE tenant_id = $1 AND transaction_id = $2`, tenantID, response.JournalTransactionID).Scan(&postingCount); err != nil {
+		t.Fatal(err)
+	}
+	if postingCount != 2 {
+		t.Fatalf("posting count after rejected append = %d, want 2", postingCount)
+	}
+}
+
 func TestCrossTenantForeignKeyAndReplay(t *testing.T) {
 	firstTenant := tenant(t)
 	secondTenant := tenant(t)
@@ -321,19 +355,26 @@ func TestEveryMutationHasEventAndOutboxVersion(t *testing.T) {
 	if eventCount != 4 || outboxCount != 4 {
 		t.Fatalf("events=%d outbox=%d, want 4 each", eventCount, outboxCount)
 	}
-	rows, err := testPool.Query(context.Background(), `SELECT aggregate_version FROM events WHERE tenant_id = $1 AND aggregate_id = $2 ORDER BY aggregate_version`, tenantID, wallet.WalletID)
+	rows, err := testPool.Query(context.Background(), `SELECT event_type, aggregate_version FROM events WHERE tenant_id = $1 AND aggregate_id = $2 ORDER BY aggregate_version`, tenantID, wallet.WalletID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	version := int64(1)
 	for rows.Next() {
+		var eventType string
 		var got int64
-		if err := rows.Scan(&got); err != nil {
+		if err := rows.Scan(&eventType, &got); err != nil {
 			t.Fatal(err)
 		}
 		if got != version {
 			t.Fatalf("event version=%d, want %d", got, version)
+		}
+		if version == 1 && eventType != "wallet.created" {
+			t.Fatalf("creation event type = %q, want wallet.created", eventType)
+		}
+		if version > 1 && eventType != "wallet.deposit_posted" {
+			t.Fatalf("later event type = %q, want wallet.deposit_posted", eventType)
 		}
 		version++
 	}

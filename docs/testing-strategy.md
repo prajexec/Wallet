@@ -34,6 +34,10 @@ Correctness tests are layered so that a fast unit suite catches accounting and s
 16. Attempt a cross-tenant posting/account reference and verify the composite foreign key rejects it; API reads return 404.
 17. Replay all raw postings and compare every wallet's result with the authoritative API balance.
 18. Verify every committed wallet mutation has exactly one event and one outbox row with consecutive aggregate versions.
+19. Verify a posting appended to an existing journal transaction is checked at commit and an unbalanced append rolls back.
+20. Verify wallet creation emits aggregate version 1 and later wallet events are contiguous.
+21. Verify service roles cannot connect across databases or alter wallet schema objects, disable journal triggers, drop journal triggers/tables, or update journal postings.
+22. Verify wallet `/readyz` is HTTP 200/degraded when only NATS is unavailable and HTTP 503 when PostgreSQL is unavailable.
 
 ## State-machine/property test
 
@@ -57,7 +61,7 @@ created money = destroyed money across user and clearing accounts
 every idempotency key has at most one monetary effect
 ```
 
-The Phase 3 integration suite is run with `-race` against the Compose PostgreSQL instance. Tests skip only when the explicit integration database URL is absent from ordinary unit runs; `make test-integration` supplies it and fails on any integration error.
+The Phase 3 integration suite is run with `-race` against the Compose PostgreSQL instance. Tests skip only when the explicit integration database URL is absent from ordinary unit runs; `make test-integration` supplies it and fails on any integration error. The migration target uses the owner-only migrator URL while the suite connects as the wallet runtime role.
 
 ## Go checks
 

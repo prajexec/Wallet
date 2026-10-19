@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -70,6 +71,26 @@ func TestReadyzReportsDependencyFailure(t *testing.T) {
 	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("ready response = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestReadyzReportsNATSDegradedButReady(t *testing.T) {
+	cfg := config.Config{HTTPAddr: ":8080", HealthTimeout: time.Second}
+	server := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), identifiers.NewDeterministicGenerator(), Dependencies{
+		Postgres: func(context.Context) error { return nil },
+		NATS:     func(context.Context) error { return errors.New("nats offline") },
+	})
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("ready response = %d, want %d; body = %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response healthResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != "degraded" || response.Checks["postgres"] != "ok" || response.Checks["nats"] != "nats offline" {
+		t.Fatalf("ready response = %+v", response)
 	}
 }
 

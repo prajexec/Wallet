@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Phase 3 hardening
+
+- Added dedicated migrator ownership and minimum runtime database grants, including append-only idempotency records and advisory-lock serialization.
+- Expanded the role-isolation matrix to cover cross-database access, DDL/trigger changes, table drops, and forbidden updates.
+- Made wallet readiness distinguish hard PostgreSQL failure from degraded NATS availability.
+- Added deferred-posting and contiguous wallet-event-version regression coverage.
+
 ## [Phase 3 — Immutable wallet ledger] — 2026-10-19
 
 ### Added

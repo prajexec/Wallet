@@ -114,25 +114,35 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), s.config.HealthTimeout)
 	defer cancel()
 	checks := make(map[string]string, 2)
-	status := http.StatusOK
-	for name, check := range map[string]CheckFunc{"postgres": s.dependencies.Postgres, "nats": s.dependencies.NATS} {
-		if check == nil {
-			checks[name] = "not_configured"
-			status = http.StatusServiceUnavailable
-			continue
-		}
-		if err := check(ctx); err != nil {
-			checks[name] = err.Error()
-			status = http.StatusServiceUnavailable
-			continue
-		}
-		checks[name] = "ok"
+	statusCode := http.StatusOK
+	status := "ok"
+
+	if s.dependencies.Postgres == nil {
+		checks["postgres"] = "not_configured"
+		statusCode = http.StatusServiceUnavailable
+		status = "not_ready"
+	} else if err := s.dependencies.Postgres(ctx); err != nil {
+		checks["postgres"] = err.Error()
+		statusCode = http.StatusServiceUnavailable
+		status = "not_ready"
+	} else {
+		checks["postgres"] = "ok"
 	}
-	responseStatus := "ok"
-	if status != http.StatusOK {
-		responseStatus = "not_ready"
+
+	if s.dependencies.NATS == nil {
+		checks["nats"] = "not_configured"
+		if statusCode == http.StatusOK {
+			status = "degraded"
+		}
+	} else if err := s.dependencies.NATS(ctx); err != nil {
+		checks["nats"] = err.Error()
+		if statusCode == http.StatusOK {
+			status = "degraded"
+		}
+	} else {
+		checks["nats"] = "ok"
 	}
-	writeHealth(w, status, healthResponse{Status: responseStatus, Checks: checks})
+	writeHealth(w, statusCode, healthResponse{Status: status, Checks: checks})
 }
 
 func (s *Server) withRequestContext(next http.Handler) http.Handler {
