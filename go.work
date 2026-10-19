@@ -1,8 +1,8 @@
-go 1.22
+go 1.23.0
 
 use (
-	./shared
-	./services/wallet
-	./services/transfer
 	./services/projector
+	./services/transfer
+	./services/wallet
+	./shared
 )
