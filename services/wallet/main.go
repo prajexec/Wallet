@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"os"
@@ -11,9 +10,10 @@ import (
 	"syscall"
 
 	"digitalwallet/services/wallet/internal/config"
+	"digitalwallet/services/wallet/internal/repository"
 	"digitalwallet/services/wallet/internal/server"
 	"digitalwallet/shared/identifiers"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 )
 
@@ -26,12 +26,16 @@ func main() {
 	}
 	logger = newLogger(parseLogLevel(cfg.LogLevel))
 
-	database, err := sql.Open("pgx", cfg.DatabaseURL)
+	database, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("open PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	defer database.Close()
+	if err := database.Ping(context.Background()); err != nil {
+		logger.Error("ping PostgreSQL", "error", err)
+		os.Exit(1)
+	}
 
 	natsConnection, err := nats.Connect(cfg.NATSURL, nats.Name(cfg.ServiceName+"/"+cfg.InstanceName))
 	if err != nil {
@@ -41,12 +45,13 @@ func main() {
 	defer natsConnection.Close()
 
 	ids := identifiers.NewGenerator()
+	store := repository.New(database, ids, cfg.InstanceName)
 	httpServer := server.New(cfg, logger, ids, server.Dependencies{
-		Postgres: database.PingContext,
+		Postgres: database.Ping,
 		NATS: func(context.Context) error {
 			return natsConnection.FlushTimeout(cfg.HealthTimeout)
 		},
-	})
+	}, store)
 
 	rootContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
