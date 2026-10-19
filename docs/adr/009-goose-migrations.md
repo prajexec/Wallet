@@ -9,13 +9,13 @@ Each service owns a separate database or logical database boundary. Phase 2 need
 
 ## Decision
 
-Use Goose CLI pinned by `GOOSE_VERSION` in the Makefile. Keep migration directories per service boundary: wallet migrations are applied independently to source and destination databases; transfer and projector/read have their own directories. Phase 2 contains empty baseline migrations.
+Use Goose CLI pinned by `GOOSE_VERSION` in the Makefile. Keep migration directories per service boundary: wallet migrations are applied independently to source and destination databases; transfer and projector/read have their own directories. Goose runs with the dedicated `migrator_role`; service runtime URLs are never used to apply schema changes. The wallet hardening migration finalizes explicit runtime grants for the selected wallet database.
 
 ## Consequences
 
 - Migration history is explicit and reviewable in Git.
 - Local setup requires the pinned Goose command to download or use its Go module cache.
-- Business migrations must be run against the correct service role/database and cannot assume cross-database transactions.
+- Business migrations must be run against the migrator role and correct database, and cannot assume cross-database transactions. Runtime service roles cannot create schema objects.
 
 ## Alternatives considered
 

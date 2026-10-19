@@ -40,7 +40,7 @@ func (r *Repository) CreateWallet(ctx context.Context, tenantID identifiers.UUID
 	var result CommandResult
 	err := r.withTransaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		q := walletdb.New(tx)
-		replayed, err := claimIdempotency(ctx, q, tenantID, key, requestHash, r.now())
+		replayed, err := claimIdempotency(ctx, q, tenantID, key, requestHash)
 		if err != nil {
 			return err
 		}
@@ -78,7 +78,7 @@ func (r *Repository) CreateWallet(ctx context.Context, tenantID identifiers.UUID
 		if err != nil {
 			return err
 		}
-		if err := completeIdempotency(ctx, q, tenantID, key, 201, body); err != nil {
+		if err := completeIdempotency(ctx, q, tenantID, key, requestHash, 201, body, now); err != nil {
 			return err
 		}
 		_ = eventID
@@ -100,7 +100,7 @@ func (r *Repository) postMoney(ctx context.Context, tenantID, walletID identifie
 	var result CommandResult
 	err := r.withTransaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		q := walletdb.New(tx)
-		replayed, err := claimIdempotency(ctx, q, tenantID, key, requestHash, r.now())
+		replayed, err := claimIdempotency(ctx, q, tenantID, key, requestHash)
 		if err != nil {
 			return err
 		}
@@ -108,7 +108,11 @@ func (r *Repository) postMoney(ctx context.Context, tenantID, walletID identifie
 			result = *replayed
 			return nil
 		}
-		wallet, err := q.GetWalletForUpdate(ctx, walletdb.GetWalletForUpdateParams{TenantID: tenantID, ID: walletID})
+		lockKey := tenantID.String() + ":wallet:" + walletID.String()
+		if err := q.AcquireWalletLock(ctx, walletdb.AcquireWalletLockParams{LockKey: lockKey}); err != nil {
+			return err
+		}
+		wallet, err := q.GetWalletForRead(ctx, walletdb.GetWalletForReadParams{TenantID: tenantID, ID: walletID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -117,9 +121,6 @@ func (r *Repository) postMoney(ctx context.Context, tenantID, walletID identifie
 		}
 		if wallet.Status != "ACTIVE" {
 			return ErrWalletClosed
-		}
-		if _, err := q.GetAccountForUpdate(ctx, walletdb.GetAccountForUpdateParams{TenantID: tenantID, ID: wallet.AccountID}); err != nil {
-			return err
 		}
 		amount, err := money.NewPositiveUSD(amountMinor)
 		if err != nil {
@@ -194,7 +195,7 @@ func (r *Repository) postMoney(ctx context.Context, tenantID, walletID identifie
 		if err != nil {
 			return err
 		}
-		if err := completeIdempotency(ctx, q, tenantID, key, 201, body); err != nil {
+		if err := completeIdempotency(ctx, q, tenantID, key, requestHash, 201, body, now); err != nil {
 			return err
 		}
 		result = CommandResult{StatusCode: 201, Body: body}

@@ -107,6 +107,8 @@ flowchart TD
 
 The database uses composite tenant foreign keys for mutable account references. References from `journal_postings` to immutable `journal_transactions`, and from `outbox_messages` to immutable `events`, use equivalent tenant-scoped insert validation triggers because PostgreSQL foreign-key key-share checks require UPDATE privilege on the referenced table. Wallet roles retain only INSERT and SELECT on immutable tables. Additional triggers reject UPDATE, DELETE, and TRUNCATE on `journal_transactions`, `journal_postings`, and `events`. A deferred constraint trigger checks debit/credit equality for each transaction and posting currency at commit.
 
+The runtime wallet role is not the database or table owner. Accounts and wallets are INSERT/SELECT-only because writes serialize with a transaction-scoped advisory lock rather than `SELECT ... FOR UPDATE`. `idempotency_records` is append-only; same-key commands serialize with an advisory lock and insert the completed response in the command transaction, so the runtime role does not need UPDATE on idempotency records.
+
 There is no mutable wallet balance table anywhere in the wallet database. The authoritative balance is always recomputed from `journal_postings`; holds are a future extension point and are currently zero.
 
 ## Transfer database

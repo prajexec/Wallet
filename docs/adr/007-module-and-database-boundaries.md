@@ -9,13 +9,13 @@ The transfer service must orchestrate wallet behavior without becoming a hidden 
 
 ## Decision
 
-Use a Go workspace with `services/wallet`, `services/transfer`, `services/projector`, and a narrow `shared` module for events, money, identifiers, and errors. Use separate PostgreSQL roles per service. Add CI that fails when the transfer module imports wallet storage packages.
+Use a Go workspace with `services/wallet`, `services/transfer`, `services/projector`, and a narrow `shared` module for events, money, identifiers, and errors. Use separate PostgreSQL runtime roles per service plus a dedicated migrator owner role. Add CI that fails when the transfer module imports wallet storage packages.
 
 ## Consequences
 
 - Cross-service behavior uses internal HTTP and events rather than shared repositories.
 - Some types are intentionally duplicated at boundaries or generated from contracts.
-- CI and database grants become part of correctness, not just style.
+- CI, database grants, and object ownership become part of correctness, not just style.
 
 ## Alternatives considered
 

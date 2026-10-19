@@ -59,14 +59,14 @@ Only `user_wallet` accounts must have `available_balance >= 0`. `system_clearing
 | L-011 | A transaction balances independently for every posting currency. | Deferred constraint trigger at commit. | Roll back the transaction. |
 | L-012 | Journal transactions, postings, and events are immutable. | UPDATE, DELETE, and TRUNCATE triggers plus INSERT/SELECT-only grants. | Database error and alert. |
 | L-013 | A tenant cannot reference another tenant's account or journal row. | Composite tenant foreign keys and tenant-scoped repositories. | Database error or API 404. |
-| L-014 | An idempotency key has one request hash and one monetary result. | Unique `(tenant_id, key)` and same-transaction response record. | Replay stored response or return 422 for hash mismatch. |
+| L-014 | An idempotency key has one request hash and one monetary result. | Unique `(tenant_id, key)`, transaction-scoped advisory lock, and same-transaction append-only response record. | Replay stored response or return 422 for hash mismatch. |
 
 ## Atomic wallet write contract
 
 One wallet write transaction does only the following:
 
-1. resolve the explicit `tenant_id` from `X-Tenant-ID` and the idempotency record;
-2. lock the wallet account row with `SELECT ... FOR UPDATE`;
+1. serialize the explicit `(tenant_id, idempotency key)` with a transaction-scoped advisory lock and resolve the request record;
+2. take a transaction-scoped advisory lock keyed by `(tenant_id, wallet_id)`;
 3. validate the journal-derived available amount and command preconditions;
 4. append journal transaction and postings;
 5. append the domain event;

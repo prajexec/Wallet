@@ -86,7 +86,7 @@ flowchart TB
 
 The dashed relationship is a boundary rule, not a network connection. The transfer module may call wallet HTTP/internal APIs and consume contract events, but it must not import wallet storage packages or query wallet tables.
 
-The Phase 2 Compose deployment uses one PostgreSQL container with four databases (`wallet_source`, `wallet_destination`, `transfer`, and `read`) and four database roles. This is a local-development topology only; service role grants remain database-scoped and the transfer role has no `CONNECT` privilege on either wallet database.
+The Compose deployment uses one PostgreSQL container with four databases (`wallet_source`, `wallet_destination`, `transfer`, and `read`), one migrator owner role, and four non-owner runtime roles. This is a local-development topology only; service role grants remain database-scoped and the transfer role has no `CONNECT` privilege on either wallet database.
 
 ## Responsibilities and ownership
 

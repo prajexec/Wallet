@@ -11,8 +11,11 @@ SELECT tenant_id, id, account_id, status, created_at
 FROM wallets
 WHERE tenant_id = $1 AND id = $2;
 
--- name: GetWalletForUpdate :one
+-- name: AcquireWalletLock :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg('lock_key')::text, 0));
+
+-- name: GetWalletForRead :one
 SELECT tenant_id, id, account_id, status, created_at
 FROM wallets
 WHERE tenant_id = $1 AND id = $2
-FOR UPDATE;
+;

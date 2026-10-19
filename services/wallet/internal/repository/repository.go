@@ -20,10 +20,9 @@ import (
 )
 
 const (
-	statusInProgress = "IN_PROGRESS"
-	statusCompleted  = "COMPLETED"
-	currencyUSD      = "USD"
-	maxRetries       = 3
+	statusCompleted = "COMPLETED"
+	currencyUSD     = "USD"
+	maxRetries      = 3
 )
 
 var (
@@ -185,23 +184,14 @@ func isRetryable(err error) bool {
 	return false
 }
 
-func claimIdempotency(ctx context.Context, q *walletdb.Queries, tenantID identifiers.UUID, key, requestHash string, now time.Time) (*CommandResult, error) {
-	rows, err := q.InsertIdempotencyRecord(ctx, walletdb.InsertIdempotencyRecordParams{
-		TenantID:       tenantID,
-		Key:            key,
-		RequestHash:    requestHash,
-		Status:         statusInProgress,
-		ResponseStatus: 202,
-		ResponseBody:   []byte(`{}`),
-		CreatedAt:      now,
-	})
-	if err != nil {
+func claimIdempotency(ctx context.Context, q *walletdb.Queries, tenantID identifiers.UUID, key, requestHash string) (*CommandResult, error) {
+	if err := q.AcquireIdempotencyLock(ctx, walletdb.AcquireIdempotencyLockParams{TenantID: tenantID, Key: key}); err != nil {
 		return nil, err
 	}
-	if rows == 1 {
+	record, err := q.GetIdempotencyRecord(ctx, walletdb.GetIdempotencyRecordParams{TenantID: tenantID, Key: key})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	record, err := q.GetIdempotencyRecord(ctx, walletdb.GetIdempotencyRecordParams{TenantID: tenantID, Key: key})
 	if err != nil {
 		return nil, err
 	}
@@ -218,18 +208,27 @@ func claimIdempotency(ctx context.Context, q *walletdb.Queries, tenantID identif
 	return &CommandResult{StatusCode: int(record.ResponseStatus), Body: canonical, Replayed: true}, nil
 }
 
-func completeIdempotency(ctx context.Context, q *walletdb.Queries, tenantID identifiers.UUID, key string, statusCode int, body []byte) error {
+func completeIdempotency(ctx context.Context, q *walletdb.Queries, tenantID identifiers.UUID, key, requestHash string, statusCode int, body []byte, createdAt time.Time) error {
 	canonical, err := canonicalJSON(body)
 	if err != nil {
 		return err
 	}
-	return q.CompleteIdempotencyRecord(ctx, walletdb.CompleteIdempotencyRecordParams{
+	rows, err := q.InsertIdempotencyRecord(ctx, walletdb.InsertIdempotencyRecordParams{
 		TenantID:       tenantID,
 		Key:            key,
+		RequestHash:    requestHash,
 		Status:         statusCompleted,
 		ResponseStatus: int32(statusCode),
 		ResponseBody:   canonical,
+		CreatedAt:      createdAt,
 	})
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return errors.New("idempotency record was not inserted")
+	}
+	return nil
 }
 
 func canonicalJSON(body []byte) ([]byte, error) {

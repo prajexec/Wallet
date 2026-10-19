@@ -11,12 +11,6 @@ SELECT tenant_id, id, kind, name, currency, created_at
 FROM accounts
 WHERE tenant_id = $1 AND name = $2 AND currency = $3;
 
--- name: GetAccountForUpdate :one
-SELECT tenant_id, id, kind, name, currency, created_at
-FROM accounts
-WHERE tenant_id = $1 AND id = $2
-FOR UPDATE;
-
 -- name: GetAccountBalance :one
 SELECT COALESCE(
     SUM(CASE WHEN side = 'CREDIT' THEN amount_minor ELSE -amount_minor END), 0

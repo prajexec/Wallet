@@ -56,7 +56,7 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 | [Testing strategy](docs/testing-strategy.md) | Unit, integration, failure-injection, and state-machine testing |
 | [Benchmarking](docs/benchmarking.md) | Contention-first benchmark plan and result template |
 | [Operations](docs/operations.md) | Local run, environment, migrations, CLIs, and troubleshooting |
-| [ADRs](docs/adr/) | Eight architecture decision records |
+| [ADRs](docs/adr/) | Architecture decision records |
 
 ## Phase plan
 
@@ -113,3 +113,5 @@ Stop the local stack with `make down`. The Compose credentials are local-develop
 - Wallet balances are authoritative sums over immutable postings; no mutable balance row exists.
 - Deposits, withdrawals, duplicate idempotency keys, tenant scoping, deferred balancing, immutable-table triggers, event/outbox writes, replay checks, and concurrent withdrawal safety are covered by real PostgreSQL tests.
 - `make sqlc` generates the committed pgx storage package and `make sqlc-check` verifies freshness.
+- A dedicated migrator owns service databases and migration-created objects; runtime service roles have minimum database/table grants and cannot alter journal schema.
+- Wallet idempotency records are append-only with transaction-scoped same-key serialization, and wallet `/readyz` keeps NATS degradation distinct from PostgreSQL failure.

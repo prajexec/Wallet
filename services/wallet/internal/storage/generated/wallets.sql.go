@@ -12,6 +12,19 @@ import (
 	identifiers "digitalwallet/shared/identifiers"
 )
 
+const acquireWalletLock = `-- name: AcquireWalletLock :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+type AcquireWalletLockParams struct {
+	LockKey string `db:"lock_key"`
+}
+
+func (q *Queries) AcquireWalletLock(ctx context.Context, arg AcquireWalletLockParams) error {
+	_, err := q.db.Exec(ctx, acquireWalletLock, arg.LockKey)
+	return err
+}
+
 const getWallet = `-- name: GetWallet :one
 SELECT tenant_id, id, account_id, status, created_at
 FROM wallets
@@ -36,20 +49,19 @@ func (q *Queries) GetWallet(ctx context.Context, arg GetWalletParams) (Wallet, e
 	return i, err
 }
 
-const getWalletForUpdate = `-- name: GetWalletForUpdate :one
+const getWalletForRead = `-- name: GetWalletForRead :one
 SELECT tenant_id, id, account_id, status, created_at
 FROM wallets
 WHERE tenant_id = $1 AND id = $2
-FOR UPDATE
 `
 
-type GetWalletForUpdateParams struct {
+type GetWalletForReadParams struct {
 	TenantID identifiers.UUID `db:"tenant_id"`
 	ID       identifiers.UUID `db:"id"`
 }
 
-func (q *Queries) GetWalletForUpdate(ctx context.Context, arg GetWalletForUpdateParams) (Wallet, error) {
-	row := q.db.QueryRow(ctx, getWalletForUpdate, arg.TenantID, arg.ID)
+func (q *Queries) GetWalletForRead(ctx context.Context, arg GetWalletForReadParams) (Wallet, error) {
+	row := q.db.QueryRow(ctx, getWalletForRead, arg.TenantID, arg.ID)
 	var i Wallet
 	err := row.Scan(
 		&i.TenantID,

@@ -10,6 +10,10 @@ WALLET_SOURCE_DATABASE_URL ?= postgres://wallet_source_role:wallet_source_dev_pa
 WALLET_DESTINATION_DATABASE_URL ?= postgres://wallet_destination_role:wallet_destination_dev_password@127.0.0.1:5432/wallet_destination?sslmode=disable
 TRANSFER_DATABASE_URL ?= postgres://transfer_role:transfer_dev_password@127.0.0.1:5432/transfer?sslmode=disable
 READ_DATABASE_URL ?= postgres://projector_role:projector_dev_password@127.0.0.1:5432/read?sslmode=disable
+WALLET_SOURCE_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_source?sslmode=disable
+WALLET_DESTINATION_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_destination?sslmode=disable
+TRANSFER_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/transfer?sslmode=disable
+READ_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/read?sslmode=disable
 
 .PHONY: build test test-race vet lint sqlc sqlc-check up down migrate migrate-wallet-source migrate-wallet-destination migrate-transfer migrate-read docs-check check-boundaries role-isolation test-integration ci
 
@@ -44,16 +48,16 @@ down:
 migrate: migrate-wallet-source migrate-wallet-destination migrate-transfer migrate-read
 
 migrate-wallet-source:
-	$(GOOSE) -dir migrations/wallet postgres "$(WALLET_SOURCE_DATABASE_URL)" up
+	$(GOOSE) -dir migrations/wallet postgres "$(WALLET_SOURCE_MIGRATOR_DATABASE_URL)" up
 
 migrate-wallet-destination:
-	$(GOOSE) -dir migrations/wallet postgres "$(WALLET_DESTINATION_DATABASE_URL)" up
+	$(GOOSE) -dir migrations/wallet postgres "$(WALLET_DESTINATION_MIGRATOR_DATABASE_URL)" up
 
 migrate-transfer:
-	$(GOOSE) -dir migrations/transfer postgres "$(TRANSFER_DATABASE_URL)" up
+	$(GOOSE) -dir migrations/transfer postgres "$(TRANSFER_MIGRATOR_DATABASE_URL)" up
 
 migrate-read:
-	$(GOOSE) -dir migrations/projector postgres "$(READ_DATABASE_URL)" up
+	$(GOOSE) -dir migrations/projector postgres "$(READ_MIGRATOR_DATABASE_URL)" up
 
 docs-check:
 	./scripts/check-docs.sh
@@ -65,6 +69,7 @@ check-boundaries:
 role-isolation:
 	$(COMPOSE) up -d postgres
 	@until $(COMPOSE) exec -T postgres pg_isready -U postgres -d postgres >/dev/null 2>&1; do sleep 1; done
+	$(MAKE) migrate
 	./scripts/test-role-isolation.sh
 
 test-integration:

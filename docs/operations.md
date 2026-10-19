@@ -1,6 +1,6 @@
 # Operations
 
-This document is the operational contract for the Phase 2 local foundation. The Compose file and service startup validation are executable; business tables, CLIs, and service behavior are intentionally deferred to their implementation phases.
+This document is the operational contract for the local foundation and Phase 3 wallet hardening. The Compose file, migration targets, and role-isolation checks are executable.
 
 ## Local deployment
 
@@ -36,7 +36,7 @@ flowchart TB
     TS -->|internal HTTP| WD
 ```
 
-`wallet-source` and `wallet-destination` use the same binary and separate database URLs/roles. The transfer role has no grants on either wallet database. The projector role has no write access to wallet or transfer source schemas.
+`wallet-source` and `wallet-destination` use the same binary and separate database URLs/roles. The transfer role has no grants on either wallet database. The projector role has no write access to wallet or transfer source schemas. `migrator_role` owns the databases and migration-created objects; runtime roles are non-owners.
 
 ## Run locally
 
@@ -52,7 +52,7 @@ make role-isolation
 make down
 ```
 
-`make up` builds the three multi-stage service images and starts PostgreSQL, NATS JetStream, `wallet-source`, `wallet-destination`, `transfer`, and `projector`. Compose healthchecks wait for PostgreSQL/NATS before starting the services and each service healthcheck calls `/readyz`.
+`make up` builds the three multi-stage service images and starts PostgreSQL, NATS JetStream, `wallet-source`, `wallet-destination`, `transfer`, and `projector`. Compose healthchecks wait for PostgreSQL/NATS before starting the services and each service healthcheck calls `/readyz`. Wallet `/readyz` returns HTTP 503 when PostgreSQL is unavailable; a NATS failure is reported as `degraded` with HTTP 200 because wallet commits are database/outbox transactions.
 
 ## Environment variables
 
@@ -87,7 +87,7 @@ The exact names become `.env.example` in Phase 2. Required configuration groups 
 
 ## Migrations and startup
 
-Phase 2 uses Goose through the `GOOSE_VERSION`-pinned `go run` command in the Makefile. Wallet source and destination both use `migrations/wallet`; transfer uses `migrations/transfer`; projector/read uses `migrations/projector`.
+Goose uses the `GOOSE_VERSION`-pinned `go run` command in the Makefile. Wallet source and destination both use `migrations/wallet`; transfer uses `migrations/transfer`; projector/read uses `migrations/projector`. Every migration target uses a database-specific URL for `migrator_role`; the service URLs above are for application traffic and tests.
 
 ```text
 make migrate-wallet-source
@@ -97,7 +97,11 @@ make migrate-read
 make migrate
 ```
 
-Each directory currently contains only an empty baseline migration. Service startup validates connectivity but does not silently run migrations. A migration may add constraints or tables but must not rewrite immutable journal history. Rollbacks that could destroy evidence are not automatic.
+The wallet directory contains the Phase 3 ledger and owner-separation migrations; transfer and projector/read retain their baseline plus owner-separation schema migration until their business tables are introduced. Service startup validates connectivity but does not silently run migrations. A migration may add constraints or tables but must not rewrite immutable journal history. Rollbacks that could destroy evidence are not automatic.
+
+For a fresh local volume, the init script creates `migrator_role` and makes it the owner of all four databases. For an existing deployment, a PostgreSQL administrator must transfer database/schema/object ownership to the migrator before applying the owner-separation migration; the migration cannot take ownership of objects owned by an unrelated role. Local validation can reset disposable state with `docker compose -f deploy/docker-compose.yml down -v` before `make up`.
+
+The wallet service has `SELECT`/`INSERT` access to wallet tables and no UPDATE on accounts, wallets, immutable journal/event tables, or idempotency records. Wallet writes serialize with a transaction-scoped advisory lock; same-key idempotency requests insert one completed response.
 
 ## Planned CLIs
 
