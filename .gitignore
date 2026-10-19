@@ -1,0 +1,22 @@
+# Go build and test output
+/bin/
+/dist/
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Generated local data
+tmp/
+data/
+*.log
