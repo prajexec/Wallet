@@ -49,6 +49,10 @@ func main() {
 		logger.Error("create JetStream context", "error", err)
 		os.Exit(1)
 	}
+	if _, err := relay.BootstrapWalletEvents(jetStream); err != nil {
+		logger.Error("bootstrap wallet events stream", "error", err)
+		os.Exit(1)
+	}
 
 	ids := identifiers.NewGenerator()
 	store := repository.New(database, ids, cfg.InstanceName)

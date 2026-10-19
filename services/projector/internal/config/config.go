@@ -19,6 +19,9 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	HealthTimeout   time.Duration
 	LogLevel        string
+	StreamName      string
+	ConsumerName    string
+	GapWindow       time.Duration
 }
 
 func Load() (Config, error) { return LoadFrom(os.LookupEnv) }
@@ -36,6 +39,9 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		ShutdownTimeout: durationOr(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second),
 		HealthTimeout:   durationOr(lookup, "HEALTH_TIMEOUT", 2*time.Second),
 		LogLevel:        strings.ToLower(valueOr(lookup, "LOG_LEVEL", "info")),
+		StreamName:      valueOr(lookup, "NATS_STREAM", "WALLET_EVENTS"),
+		ConsumerName:    valueOr(lookup, "NATS_CONSUMER", "projector"),
+		GapWindow:       durationOr(lookup, "ORDERING_GAP_WINDOW", 30*time.Second),
 	}
 	var problems []string
 	if strings.TrimSpace(cfg.ServiceName) == "" {
@@ -46,6 +52,15 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.HTTPAddr) == "" {
 		problems = append(problems, "HTTP_ADDR must not be empty")
+	}
+	if strings.TrimSpace(cfg.StreamName) == "" {
+		problems = append(problems, "NATS_STREAM must not be empty")
+	}
+	if strings.TrimSpace(cfg.ConsumerName) == "" {
+		problems = append(problems, "NATS_CONSUMER must not be empty")
+	}
+	if cfg.GapWindow <= 0 {
+		problems = append(problems, "ORDERING_GAP_WINDOW must be greater than zero")
 	}
 	if err := validateURL("DATABASE_URL", cfg.DatabaseURL, "postgres", "postgresql"); err != nil {
 		problems = append(problems, err.Error())

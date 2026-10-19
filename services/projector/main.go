@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"digitalwallet/services/projector/internal/config"
+	"digitalwallet/services/projector/internal/consumer"
 	"digitalwallet/services/projector/internal/server"
 	"digitalwallet/shared/identifiers"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -37,6 +38,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer natsConnection.Close()
+	jetStream, err := natsConnection.JetStream()
+	if err != nil {
+		logger.Error("create JetStream context", "error", err)
+		os.Exit(1)
+	}
+	if _, err := consumer.BootstrapConsumer(jetStream, cfg.StreamName, cfg.ConsumerName); err != nil {
+		logger.Error("bootstrap projector consumer", "error", err)
+		os.Exit(1)
+	}
 	httpServer := server.New(cfg, logger, identifiers.NewGenerator(), server.Dependencies{
 		Postgres: database.PingContext,
 		NATS:     func(context.Context) error { return natsConnection.FlushTimeout(cfg.HealthTimeout) },
