@@ -12,10 +12,13 @@ All notable changes to this project are documented here.
 - Added database-enforced append-only triggers, deferred double-entry checks, composite tenant validation, account-row locking, bounded serialization retries, and no mutable balance table.
 - Added sqlc-generated pgx storage, wallet domain logic, authoritative wallet HTTP endpoints, keyset entry pagination, and real PostgreSQL integration/property tests.
 - Added a measured 100,000-posting authoritative SUM read result to the benchmark plan.
+- Added a deferred-posting validation optimization that preserves append-time invariant checks without rescanning a large batch for every posting.
 
 ### Verification
 
-- Phase 3 verification is recorded in the final phase report; Phase 4 relay/consumer work remains deferred.
+- `make ci` passed with sqlc freshness, the extended role matrix, unit/race tests, and the Compose-backed integration suite.
+- Wallet service manual flow passed for create, deposit, withdraw, authoritative balance, and journal entries; a 100,000-posting SUM read measured 18.098 ms in the documented local run.
+- Phase 4 relay/consumer work remains deferred.
 
 ## [Phase 2 — Repository foundation] — 2026-10-19
 

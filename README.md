@@ -61,8 +61,8 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 ## Phase plan
 
 1. Contracts and documentation — complete (`phase-1-contracts`).
-2. Repository foundation and local infrastructure — current phase.
-3. Immutable wallet ledger.
+2. Repository foundation and local infrastructure — complete (`phase-2-foundation`).
+3. Immutable wallet ledger — current phase.
 4. Outbox and event consumption.
 5. CQRS projections.
 6. Transfer saga.
@@ -107,3 +107,9 @@ Stop the local stack with `make down`. The Compose credentials are local-develop
 - `make ci` passes from the clean repository tree.
 - Compose starts PostgreSQL, NATS JetStream, both wallet instances, transfer, and projector; all service `/readyz` endpoints report healthy.
 - The transfer role cannot connect to either wallet database, and the boundary checker rejects a deliberate forbidden import.
+
+## Phase 3 ledger acceptance
+
+- Wallet balances are authoritative sums over immutable postings; no mutable balance row exists.
+- Deposits, withdrawals, duplicate idempotency keys, tenant scoping, deferred balancing, immutable-table triggers, event/outbox writes, replay checks, and concurrent withdrawal safety are covered by real PostgreSQL tests.
+- `make sqlc` generates the committed pgx storage package and `make sqlc-check` verifies freshness.
