@@ -54,6 +54,7 @@ flowchart TB
         DestinationDB[(wallet_destination database)]
     end
     NATS[(NATS JetStream)]
+    Postgres[(PostgreSQL container)]
     subgraph ProjectorService[projector service module]
         Consumer[Consumer + inbox]
         Ordering[Aggregate ordering + gap detector]
@@ -67,6 +68,10 @@ flowchart TB
     Saga --> TransferRepo --> TransferDB
     Saga --> SourceAPI
     Saga --> DestinationAPI
+    Postgres --> SourceDB
+    Postgres --> DestinationDB
+    Postgres --> TransferDB
+    Postgres --> ReadDB
     TransferDB --> TransferOutbox --> NATS
     SourceAPI --> SourceCommand --> SourceJournal --> SourceDB
     SourceDB --> SourceOutbox --> NATS
