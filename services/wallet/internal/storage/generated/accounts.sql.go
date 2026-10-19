@@ -59,6 +59,32 @@ func (q *Queries) GetAccountByName(ctx context.Context, arg GetAccountByNamePara
 	return i, err
 }
 
+const getAccountForUpdate = `-- name: GetAccountForUpdate :one
+SELECT tenant_id, id, kind, name, currency, created_at
+FROM accounts
+WHERE tenant_id = $1 AND id = $2
+FOR UPDATE
+`
+
+type GetAccountForUpdateParams struct {
+	TenantID identifiers.UUID `db:"tenant_id"`
+	ID       identifiers.UUID `db:"id"`
+}
+
+func (q *Queries) GetAccountForUpdate(ctx context.Context, arg GetAccountForUpdateParams) (Account, error) {
+	row := q.db.QueryRow(ctx, getAccountForUpdate, arg.TenantID, arg.ID)
+	var i Account
+	err := row.Scan(
+		&i.TenantID,
+		&i.ID,
+		&i.Kind,
+		&i.Name,
+		&i.Currency,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertAccount = `-- name: InsertAccount :exec
 INSERT INTO accounts (
     tenant_id, id, kind, name, currency, created_at

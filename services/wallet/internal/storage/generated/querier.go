@@ -9,8 +9,10 @@ import (
 )
 
 type Querier interface {
+	CompleteIdempotencyRecord(ctx context.Context, arg CompleteIdempotencyRecordParams) error
 	GetAccountBalance(ctx context.Context, arg GetAccountBalanceParams) (int64, error)
 	GetAccountByName(ctx context.Context, arg GetAccountByNameParams) (Account, error)
+	GetAccountForUpdate(ctx context.Context, arg GetAccountForUpdateParams) (Account, error)
 	GetIdempotencyRecord(ctx context.Context, arg GetIdempotencyRecordParams) (IdempotencyRecord, error)
 	GetNextAggregateVersion(ctx context.Context, arg GetNextAggregateVersionParams) (int64, error)
 	GetWallet(ctx context.Context, arg GetWalletParams) (Wallet, error)

@@ -64,7 +64,7 @@ JOIN journal_postings AS jp
   ON jp.tenant_id = jt.tenant_id AND jp.transaction_id = jt.id
 WHERE jt.tenant_id = $1
   AND jp.account_id = $2
-  AND (jt.created_at, jt.id) < ($3, $4)
+  AND (jt.created_at, jt.id) < ($3::timestamptz, $4::uuid)
 GROUP BY jt.id, jt.operation_type, jt.external_reference, jt.created_at
 ORDER BY jt.created_at DESC, jt.id DESC
 LIMIT $5;

@@ -12,6 +12,33 @@ import (
 	identifiers "digitalwallet/shared/identifiers"
 )
 
+const completeIdempotencyRecord = `-- name: CompleteIdempotencyRecord :exec
+UPDATE idempotency_records
+SET status = $3,
+    response_status = $4,
+    response_body = $5
+WHERE tenant_id = $1 AND key = $2
+`
+
+type CompleteIdempotencyRecordParams struct {
+	TenantID       identifiers.UUID `db:"tenant_id"`
+	Key            string           `db:"key"`
+	Status         string           `db:"status"`
+	ResponseStatus int32            `db:"response_status"`
+	ResponseBody   []byte           `db:"response_body"`
+}
+
+func (q *Queries) CompleteIdempotencyRecord(ctx context.Context, arg CompleteIdempotencyRecordParams) error {
+	_, err := q.db.Exec(ctx, completeIdempotencyRecord,
+		arg.TenantID,
+		arg.Key,
+		arg.Status,
+		arg.ResponseStatus,
+		arg.ResponseBody,
+	)
+	return err
+}
+
 const getIdempotencyRecord = `-- name: GetIdempotencyRecord :one
 SELECT tenant_id, key, request_hash, status, response_status, response_body, created_at
 FROM idempotency_records

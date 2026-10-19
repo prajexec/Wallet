@@ -221,18 +221,18 @@ JOIN journal_postings AS jp
   ON jp.tenant_id = jt.tenant_id AND jp.transaction_id = jt.id
 WHERE jt.tenant_id = $1
   AND jp.account_id = $2
-  AND (jt.created_at, jt.id) < ($3, $4)
+  AND (jt.created_at, jt.id) < ($3::timestamptz, $4::uuid)
 GROUP BY jt.id, jt.operation_type, jt.external_reference, jt.created_at
 ORDER BY jt.created_at DESC, jt.id DESC
 LIMIT $5
 `
 
 type ListWalletEntriesBeforeParams struct {
-	TenantID    identifiers.UUID `db:"tenant_id"`
-	AccountID   identifiers.UUID `db:"account_id"`
-	CreatedAt   time.Time        `db:"created_at"`
-	CreatedAt_2 time.Time        `db:"created_at_2"`
-	Limit       int32            `db:"limit"`
+	TenantID  identifiers.UUID `db:"tenant_id"`
+	AccountID identifiers.UUID `db:"account_id"`
+	Column3   time.Time        `db:"column_3"`
+	Column4   identifiers.UUID `db:"column_4"`
+	Limit     int32            `db:"limit"`
 }
 
 type ListWalletEntriesBeforeRow struct {
@@ -247,8 +247,8 @@ func (q *Queries) ListWalletEntriesBefore(ctx context.Context, arg ListWalletEnt
 	rows, err := q.db.Query(ctx, listWalletEntriesBefore,
 		arg.TenantID,
 		arg.AccountID,
-		arg.CreatedAt,
-		arg.CreatedAt_2,
+		arg.Column3,
+		arg.Column4,
 		arg.Limit,
 	)
 	if err != nil {
