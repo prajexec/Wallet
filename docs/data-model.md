@@ -105,7 +105,7 @@ flowchart TD
     Record --> Commit[Commit; return response]
 ```
 
-The database uses composite tenant foreign keys and triggers rejecting UPDATE, DELETE, and TRUNCATE on `journal_transactions`, `journal_postings`, and `events`. A deferred constraint trigger checks debit/credit equality for each transaction and posting currency at commit.
+The database uses composite tenant foreign keys for mutable account references. References from `journal_postings` to immutable `journal_transactions`, and from `outbox_messages` to immutable `events`, use equivalent tenant-scoped insert validation triggers because PostgreSQL foreign-key key-share checks require UPDATE privilege on the referenced table. Wallet roles retain only INSERT and SELECT on immutable tables. Additional triggers reject UPDATE, DELETE, and TRUNCATE on `journal_transactions`, `journal_postings`, and `events`. A deferred constraint trigger checks debit/credit equality for each transaction and posting currency at commit.
 
 There is no mutable wallet balance table anywhere in the wallet database. The authoritative balance is always recomputed from `journal_postings`; holds are a future extension point and are currently zero.
 

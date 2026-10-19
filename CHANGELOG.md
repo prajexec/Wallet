@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [Phase 3 — Immutable wallet ledger] — 2026-10-19
+
+### Added
+
+- Added tenant-scoped wallet/accounts, USD journal postings, immutable events, transactional outbox rows, and idempotency records.
+- Added database-enforced append-only triggers, deferred double-entry checks, composite tenant validation, account-row locking, bounded serialization retries, and no mutable balance table.
+- Added sqlc-generated pgx storage, wallet domain logic, authoritative wallet HTTP endpoints, keyset entry pagination, and real PostgreSQL integration/property tests.
+- Added a measured 100,000-posting authoritative SUM read result to the benchmark plan.
+
+### Verification
+
+- Phase 3 verification is recorded in the final phase report; Phase 4 relay/consumer work remains deferred.
+
 ## [Phase 2 — Repository foundation] — 2026-10-19
 
 ### Added

@@ -45,6 +45,7 @@ Requirements: Go 1.23 or newer, Docker Engine/Desktop with the Compose v2 plugin
 ```text
 make up
 make migrate
+make test-integration
 curl http://localhost:8081/healthz
 curl http://localhost:8081/readyz
 make role-isolation

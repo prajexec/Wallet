@@ -1,6 +1,6 @@
 # Event model
 
-Events are durable integration contracts. They are emitted only after the owning service commits the state change and its outbox row. Event payloads are versioned; consumers must tolerate redelivery and must not infer ordering from NATS delivery order alone.
+Events are durable integration contracts. They are emitted only after the owning service commits the state change and its outbox row. The `events.payload` column stores the complete JSON envelope shown below; event payloads are versioned and consumers must tolerate redelivery without inferring ordering from NATS delivery order alone.
 
 ## Envelope
 

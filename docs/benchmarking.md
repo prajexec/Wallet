@@ -38,4 +38,28 @@ Capture per run:
 
 ## Results
 
-Phase 1 result: **not run**. No executable service or benchmark harness exists yet. Phase 8 will append dated results, environment, exact commands, and observed contention findings here.
+## Phase 3 ledger read measurement
+
+Measured locally on 2026-10-19 against PostgreSQL 17 in the Compose container using the wallet's authoritative balance query and the existing `(tenant_id, account_id, currency)` index:
+
+```sql
+SELECT COALESCE(SUM(CASE WHEN side = 'CREDIT' THEN amount_minor ELSE -amount_minor END), 0)::bigint
+FROM journal_postings
+WHERE tenant_id = $1 AND account_id = $2 AND currency = 'USD';
+```
+
+Dataset: one user-wallet account with **100,000 postings** and a matching 100,000 postings on its clearing account, warm local PostgreSQL cache, `EXPLAIN (ANALYZE, BUFFERS)` after `ANALYZE journal_postings`.
+
+Observed result:
+
+| Metric | Result |
+| --- | --- |
+| Plan | Bitmap index scan on `journal_postings_account_balance_idx` followed by bitmap heap scan and aggregate |
+| Rows aggregated | 100,000 |
+| Shared buffers | 1,808 hits |
+| Planning time | 0.560 ms |
+| Execution time | 18.098 ms |
+
+This is a local diagnostic, not a performance acceptance target. It shows that a journal-derived balance is currently practical at this scale with the composite index, but the cost is linear in the account's postings. A derived snapshot remains a Phase 5 read-model concern and must not replace the journal authority.
+
+Phase 8 will append contention-first throughput and p50/p95/p99 results with pinned environment and workload details.
