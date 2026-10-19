@@ -60,8 +60,8 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 
 ## Phase plan
 
-1. Contracts and documentation — current phase.
-2. Repository foundation and local infrastructure.
+1. Contracts and documentation — complete (`phase-1-contracts`).
+2. Repository foundation and local infrastructure — current phase.
 3. Immutable wallet ledger.
 4. Outbox and event consumption.
 5. CQRS projections.
@@ -89,15 +89,21 @@ The service health endpoints are:
 
 Stop the local stack with `make down`. The Compose credentials are local-development values only; do not reuse them outside the local stack.
 
-## Phase 1 acceptance
+## Phase 1 acceptance (historical)
 
 - All required contract documents and ADRs exist.
 - Required Mermaid diagrams are included in the relevant documents.
 - Public and internal endpoint shapes, idempotency semantics, event ordering, saga failure handling, and projection rebuild protocol are written down before implementation.
-- No application dependencies, generated code, credentials, or unverified runtime claims are included in this phase.
+- The Phase 1 contract commits intentionally contained no application dependencies or generated code.
 
 ## Phase 2 foundation
 
 - The Go workspace contains the shared contract module and three service modules.
 - Local Compose starts one PostgreSQL server with four isolated databases, NATS JetStream, two wallet instances, transfer, and projector.
 - Runtime readiness probes PostgreSQL and NATS; migrations are explicit and wallet tables remain deferred to Phase 3.
+
+## Phase 2 acceptance
+
+- `make ci` passes from the clean repository tree.
+- Compose starts PostgreSQL, NATS JetStream, both wallet instances, transfer, and projector; all service `/readyz` endpoints report healthy.
+- The transfer role cannot connect to either wallet database, and the boundary checker rejects a deliberate forbidden import.

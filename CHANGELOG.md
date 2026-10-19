@@ -15,7 +15,11 @@ All notable changes to this project are documented here.
 
 ### Verification
 
-- Phase 2 implementation checks are recorded in the final phase report; business tables and migration content remain deferred to later phases.
+- `make ci` passed: documentation rendering/OpenAPI lint, builds, tests, race tests, vet, formatting/shell lint, boundary checks, and role-isolation integration check.
+- `docker compose -f deploy/docker-compose.yml up -d --build` passed; PostgreSQL and NATS became healthy and all four service containers became healthy.
+- `curl http://localhost:8081/readyz`, `:8082`, `:8083`, and `:8084` each returned HTTP 200 with PostgreSQL and NATS checks `ok`.
+- `make migrate` applied the empty baseline migration to all four databases.
+- Business tables and migration content remain deferred to later phases.
 
 ## [Phase 1 — Contracts and documentation] — 2026-10-19
 
