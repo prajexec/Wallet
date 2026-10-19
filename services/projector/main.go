@@ -74,6 +74,21 @@ func main() {
 	httpServer := server.New(cfg, logger, identifiers.NewGenerator(), server.Dependencies{
 		Postgres: database.PingContext,
 		NATS:     func(context.Context) error { return natsConnection.FlushTimeout(cfg.HealthTimeout) },
+		Stats: func(ctx context.Context) (server.StatsResponse, error) {
+			s, err := consumer.QueryStats(ctx, database, cfg.ConsumerName)
+			if err != nil {
+				return server.StatsResponse{}, err
+			}
+			return server.StatsResponse{
+				Service:                     s.Service,
+				UnpublishedOutboxCount:      s.UnpublishedOutboxCount,
+				OldestUnpublishedAgeSeconds: s.OldestUnpublishedAgeSeconds,
+				AttemptsHistogram:           s.AttemptsHistogram,
+				BufferedEventCount:          s.BufferedEventCount,
+				OpenGapCount:                s.OpenGapCount,
+				DeadLetterCount:             s.DeadLetterCount,
+			}, nil
+		},
 	})
 	rootContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

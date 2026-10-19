@@ -29,3 +29,23 @@ func TestHealthAndReady(t *testing.T) {
 		}
 	}
 }
+
+func TestStatsEndpoint(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":8080", HealthTimeout: time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)), identifiers.NewDeterministicGenerator(), Dependencies{
+		Postgres: func(context.Context) error { return nil },
+		NATS:     func(context.Context) error { return nil },
+		Stats: func(context.Context) (StatsResponse, error) {
+			return StatsResponse{
+				Service:            "projector",
+				BufferedEventCount: 0,
+				OpenGapCount:       0,
+				DeadLetterCount:    0,
+			}, nil
+		},
+	})
+	recorder := httptest.NewRecorder()
+	server.http.Handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/internal/v1/stats", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("stats status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}

@@ -45,6 +45,7 @@ type WalletStore interface {
 	ListEntries(context.Context, identifiers.UUID, identifiers.UUID, string, int32) (repository.EntryPage, error)
 	Deposit(context.Context, identifiers.UUID, identifiers.UUID, string, string, int64, string) (repository.CommandResult, error)
 	Withdraw(context.Context, identifiers.UUID, identifiers.UUID, string, string, int64, string) (repository.CommandResult, error)
+	GetStats(context.Context) (repository.StatsResponse, error)
 }
 
 // Server owns the HTTP lifecycle and wallet endpoints for one wallet instance.
@@ -87,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.HandleFunc("GET /internal/v1/stats", s.stats)
 	mux.HandleFunc("POST /v1/wallets", s.createWallet)
 	mux.HandleFunc("GET /v1/wallets/{wallet_id}", s.getWallet)
 	mux.HandleFunc("GET /v1/wallets/{wallet_id}/balance", s.getBalance)
@@ -365,6 +367,22 @@ func pathUUID(w http.ResponseWriter, r *http.Request, name string) (identifiers.
 
 func (s *Server) unavailable(w http.ResponseWriter, r *http.Request) {
 	s.writeError(w, r, http.StatusServiceUnavailable, "wallet_unavailable", errors.New("wallet repository is not configured"), true)
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		s.writeJSON(w, http.StatusOK, repository.StatsResponse{
+			Service:           "wallet",
+			AttemptsHistogram: map[int32]int64{},
+		})
+		return
+	}
+	stats, err := s.store.GetStats(r.Context())
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", err, false)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, stats)
 }
 
 func (s *Server) writeCommandResult(w http.ResponseWriter, result repository.CommandResult) {

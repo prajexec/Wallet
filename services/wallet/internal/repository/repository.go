@@ -310,3 +310,55 @@ func ensureSystemAccount(ctx context.Context, q *walletdb.Queries, ids identifie
 	}
 	return q.GetAccountByName(ctx, walletdb.GetAccountByNameParams{TenantID: tenantID, Name: name, Currency: currencyUSD})
 }
+
+// StatsResponse represents outbox and event metrics reported by /internal/v1/stats.
+type StatsResponse struct {
+	Service                     string          `json:"service"`
+	UnpublishedOutboxCount      int64           `json:"unpublished_outbox_count"`
+	OldestUnpublishedAgeSeconds float64         `json:"oldest_unpublished_age_seconds"`
+	AttemptsHistogram           map[int32]int64 `json:"attempts_histogram"`
+	BufferedEventCount          int64           `json:"buffered_event_count"`
+	OpenGapCount                int64           `json:"open_gap_count"`
+	DeadLetterCount             int64           `json:"dead_letter_count"`
+}
+
+// GetStats returns outbox observability metrics without a metrics stack.
+func (r *Repository) GetStats(ctx context.Context) (StatsResponse, error) {
+	stats := StatsResponse{
+		Service:           "wallet",
+		AttemptsHistogram: make(map[int32]int64),
+	}
+	const countQuery = `
+SELECT 
+    count(*),
+    COALESCE(EXTRACT(EPOCH FROM (now() - MIN(created_at))), 0)
+FROM outbox_messages
+WHERE published_at IS NULL;
+`
+	if err := r.pool.QueryRow(ctx, countQuery).Scan(&stats.UnpublishedOutboxCount, &stats.OldestUnpublishedAgeSeconds); err != nil {
+		return stats, fmt.Errorf("query outbox count and age: %w", err)
+	}
+
+	const histQuery = `
+SELECT attempts, count(*)
+FROM outbox_messages
+WHERE published_at IS NULL
+GROUP BY attempts
+ORDER BY attempts;
+`
+	rows, err := r.pool.Query(ctx, histQuery)
+	if err != nil {
+		return stats, fmt.Errorf("query outbox attempts histogram: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var attempt int32
+		var count int64
+		if err := rows.Scan(&attempt, &count); err != nil {
+			return stats, fmt.Errorf("scan outbox histogram row: %w", err)
+		}
+		stats.AttemptsHistogram[attempt] = count
+	}
+	return stats, rows.Err()
+}

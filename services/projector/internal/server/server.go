@@ -15,9 +15,22 @@ import (
 
 type CheckFunc func(context.Context) error
 
+type StatsResponse struct {
+	Service                     string          `json:"service"`
+	UnpublishedOutboxCount      int64           `json:"unpublished_outbox_count"`
+	OldestUnpublishedAgeSeconds float64         `json:"oldest_unpublished_age_seconds"`
+	AttemptsHistogram           map[int32]int64 `json:"attempts_histogram"`
+	BufferedEventCount          int64           `json:"buffered_event_count"`
+	OpenGapCount                int64           `json:"open_gap_count"`
+	DeadLetterCount             int64           `json:"dead_letter_count"`
+}
+
+type StatsFunc func(context.Context) (StatsResponse, error)
+
 type Dependencies struct {
 	Postgres CheckFunc
 	NATS     CheckFunc
+	Stats    StatsFunc
 }
 
 type Server struct {
@@ -39,6 +52,7 @@ func New(cfg config.Config, logger *slog.Logger, ids identifiers.Generator, depe
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.HandleFunc("GET /internal/v1/stats", s.stats)
 	s.http = &http.Server{Addr: cfg.HTTPAddr, Handler: s.middleware(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	return s
 }
@@ -54,6 +68,22 @@ func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ct
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	if s.dependencies.Stats == nil {
+		writeJSON(w, http.StatusOK, StatsResponse{
+			Service:           "projector",
+			AttemptsHistogram: map[int32]int64{},
+		})
+		return
+	}
+	stats, err := s.dependencies.Stats(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
 }
 
 func (s *Server) readyz(w http.ResponseWriter, request *http.Request) {

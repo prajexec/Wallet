@@ -38,6 +38,12 @@ func (f fakeWalletStore) Deposit(context.Context, identifiers.UUID, identifiers.
 func (f fakeWalletStore) Withdraw(context.Context, identifiers.UUID, identifiers.UUID, string, string, int64, string) (repository.CommandResult, error) {
 	return repository.CommandResult{}, nil
 }
+func (f fakeWalletStore) GetStats(context.Context) (repository.StatsResponse, error) {
+	return repository.StatsResponse{
+		Service:           "wallet",
+		AttemptsHistogram: map[int32]int64{},
+	}, nil
+}
 
 func TestHealthEndpointsAndRequestHeaders(t *testing.T) {
 	cfg := config.Config{ServiceName: "wallet", InstanceName: "wallet-source", HTTPAddr: ":8080", HealthTimeout: time.Second}
@@ -124,5 +130,23 @@ func TestTenantScopedWalletNotFoundReturns404(t *testing.T) {
 	server.Handler().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestStatsEndpoint(t *testing.T) {
+	cfg := config.Config{HTTPAddr: ":8080", HealthTimeout: time.Second}
+	server := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), identifiers.NewDeterministicGenerator(), Dependencies{}, fakeWalletStore{})
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/stats", nil)
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var resp repository.StatsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal stats response: %v", err)
+	}
+	if resp.Service != "wallet" {
+		t.Fatalf("service = %q, want wallet", resp.Service)
 	}
 }

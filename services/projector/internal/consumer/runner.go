@@ -729,3 +729,42 @@ WHERE ordering_gaps.status = 'OPEN';
 func (s *GapSweeper) GapCount() uint64 {
 	return s.gapCount.Load()
 }
+
+// Stats holds observability metrics for projector ordered consumption.
+type Stats struct {
+	Service                     string          `json:"service"`
+	UnpublishedOutboxCount      int64           `json:"unpublished_outbox_count"`
+	OldestUnpublishedAgeSeconds float64         `json:"oldest_unpublished_age_seconds"`
+	AttemptsHistogram           map[int32]int64 `json:"attempts_histogram"`
+	BufferedEventCount          int64           `json:"buffered_event_count"`
+	OpenGapCount                int64           `json:"open_gap_count"`
+	DeadLetterCount             int64           `json:"dead_letter_count"`
+}
+
+// QueryStats queries projector metrics from the read database.
+func QueryStats(ctx context.Context, db *sql.DB, consumerName string) (Stats, error) {
+	if consumerName == "" {
+		consumerName = "projector"
+	}
+	stats := Stats{
+		Service:           "projector",
+		AttemptsHistogram: make(map[int32]int64),
+	}
+
+	const qBuf = `SELECT count(*) FROM buffered_events WHERE consumer_name = $1;`
+	if err := db.QueryRowContext(ctx, qBuf, consumerName).Scan(&stats.BufferedEventCount); err != nil {
+		return stats, fmt.Errorf("count buffered events: %w", err)
+	}
+
+	const qGaps = `SELECT count(*) FROM ordering_gaps WHERE consumer_name = $1 AND status = 'OPEN';`
+	if err := db.QueryRowContext(ctx, qGaps, consumerName).Scan(&stats.OpenGapCount); err != nil {
+		return stats, fmt.Errorf("count open gaps: %w", err)
+	}
+
+	const qDL = `SELECT count(*) FROM dead_letter_events WHERE consumer_name = $1;`
+	if err := db.QueryRowContext(ctx, qDL, consumerName).Scan(&stats.DeadLetterCount); err != nil {
+		return stats, fmt.Errorf("count dead letter events: %w", err)
+	}
+
+	return stats, nil
+}
