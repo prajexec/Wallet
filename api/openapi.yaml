@@ -1,0 +1,598 @@
+openapi: 3.1.0
+info:
+  title: Digital Wallet API
+  version: 0.1.0
+  description: |
+    Phase 1 contract for the fintech-grade digital wallet backend.
+    Monetary values are integer minor units and v1 supports USD only.
+servers:
+  - url: http://localhost:8080
+    description: Local gateway placeholder
+tags:
+  - name: Wallets
+  - name: Transfers
+  - name: Internal wallet
+paths:
+  /v1/wallets:
+    post:
+      tags: [Wallets]
+      summary: Create a wallet
+      operationId: createWallet
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWalletRequest'
+      responses:
+        '201':
+          description: Wallet created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletResponse'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wallets/{wallet_id}/balance:
+    get:
+      tags: [Wallets]
+      summary: Read an authoritative journal-derived balance
+      operationId: getWalletBalance
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+      responses:
+        '200':
+          description: Balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/wallets/{wallet_id}/entries:
+    get:
+      tags: [Wallets]
+      summary: Read authoritative journal entries
+      operationId: listWalletEntries
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Immutable entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntryListResponse'
+  /v1/wallets/{wallet_id}/deposits:
+    post:
+      tags: [Wallets]
+      summary: Post a deposit
+      operationId: postDeposit
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoneyCommand'
+      responses:
+        '201':
+          description: Deposit journal entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalCommandResponse'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wallets/{wallet_id}/withdrawals:
+    post:
+      tags: [Wallets]
+      summary: Post a withdrawal
+      operationId: postWithdrawal
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoneyCommand'
+      responses:
+        '201':
+          description: Withdrawal journal entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalCommandResponse'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          description: Invalid request or insufficient funds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/transfers:
+    post:
+      tags: [Transfers]
+      summary: Create a wallet-to-wallet transfer
+      operationId: createTransfer
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTransferRequest'
+      responses:
+        '202':
+          description: Transfer accepted by the saga
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/transfers/{transfer_id}:
+    get:
+      tags: [Transfers]
+      summary: Inspect a transfer
+      operationId: getTransfer
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/TransferId'
+      responses:
+        '200':
+          description: Transfer state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /internal/v1/wallets/{wallet_id}/reservations:
+    post:
+      tags: [Internal wallet]
+      summary: Reserve source funds
+      operationId: reserveWalletFunds
+      security:
+        - serviceToken: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferMoneyCommand'
+      responses:
+        '200':
+          description: Existing or newly created reservation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /internal/v1/wallets/{wallet_id}/pending-credits:
+    post:
+      tags: [Internal wallet]
+      summary: Create a pending destination credit
+      operationId: createPendingCredit
+      security:
+        - serviceToken: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferMoneyCommand'
+      responses:
+        '200':
+          description: Pending credit result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /internal/v1/wallets/{wallet_id}/captures:
+    post:
+      tags: [Internal wallet]
+      summary: Capture a reservation
+      operationId: captureWalletReservation
+      security:
+        - serviceToken: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferMoneyCommand'
+      responses:
+        '200':
+          description: Capture result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /internal/v1/wallets/{wallet_id}/finalizations:
+    post:
+      tags: [Internal wallet]
+      summary: Finalize a pending credit
+      operationId: finalizePendingCredit
+      security:
+        - serviceToken: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferMoneyCommand'
+      responses:
+        '200':
+          description: Finalization result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /internal/v1/wallets/{wallet_id}/compensations:
+    post:
+      tags: [Internal wallet]
+      summary: Append an idempotent compensation entry
+      operationId: compensateWalletOperation
+      security:
+        - serviceToken: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/OperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferMoneyCommand'
+      responses:
+        '200':
+          description: Compensation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /internal/v1/operations/{operation_id}:
+    get:
+      tags: [Internal wallet]
+      summary: Resolve an operation status
+      operationId: getOperationStatus
+      security:
+        - serviceToken: []
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/OperationId'
+      responses:
+        '200':
+          description: Known operation status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    serviceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: service-token
+  parameters:
+    TenantId:
+      name: X-Tenant-ID
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 200
+    WalletId:
+      name: wallet_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
+    TransferId:
+      name: transfer_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
+    OperationId:
+      name: X-Operation-ID
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+  responses:
+    IdempotencyConflict:
+      description: Idempotency key conflict or request in progress
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found in tenant scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    UUID:
+      type: string
+      format: uuid
+    Currency:
+      type: string
+      enum: [USD]
+    AmountMinor:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Positive integer number of USD minor units.
+    MoneyCommand:
+      type: object
+      required: [amount_minor, currency]
+      properties:
+        amount_minor:
+          $ref: '#/components/schemas/AmountMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reference:
+          type: string
+          maxLength: 200
+    CreateWalletRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        external_reference:
+          type: string
+          maxLength: 200
+    WalletResponse:
+      type: object
+      required: [wallet_id, tenant_id, currency, status]
+      properties:
+        wallet_id:
+          $ref: '#/components/schemas/UUID'
+        tenant_id:
+          $ref: '#/components/schemas/UUID'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        status:
+          type: string
+          enum: [ACTIVE, CLOSED]
+    Balance:
+      type: object
+      required: [currency, current_minor, held_minor, available_minor]
+      properties:
+        currency:
+          $ref: '#/components/schemas/Currency'
+        current_minor:
+          type: integer
+          format: int64
+        held_minor:
+          type: integer
+          format: int64
+          minimum: 0
+        available_minor:
+          type: integer
+          format: int64
+          minimum: 0
+    BalanceResponse:
+      type: object
+      required: [wallet_id, balance, authoritative]
+      properties:
+        wallet_id:
+          $ref: '#/components/schemas/UUID'
+        balance:
+          $ref: '#/components/schemas/Balance'
+        authoritative:
+          type: boolean
+          const: true
+    JournalCommandResponse:
+      type: object
+      required: [operation_id, journal_transaction_id, amount_minor, currency]
+      properties:
+        operation_id:
+          $ref: '#/components/schemas/UUID'
+        journal_transaction_id:
+          $ref: '#/components/schemas/UUID'
+        amount_minor:
+          $ref: '#/components/schemas/AmountMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+    Entry:
+      type: object
+      required: [journal_transaction_id, occurred_at, postings]
+      properties:
+        journal_transaction_id:
+          $ref: '#/components/schemas/UUID'
+        occurred_at:
+          type: string
+          format: date-time
+        postings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Posting'
+    Posting:
+      type: object
+      required: [posting_id, account_id, currency, side, amount_minor]
+      properties:
+        posting_id:
+          $ref: '#/components/schemas/UUID'
+        account_id:
+          $ref: '#/components/schemas/UUID'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        side:
+          type: string
+          enum: [DEBIT, CREDIT]
+        amount_minor:
+          $ref: '#/components/schemas/AmountMinor'
+    EntryListResponse:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entry'
+        next_cursor:
+          type: string
+    CreateTransferRequest:
+      type: object
+      required: [source_wallet_id, destination_wallet_id, amount_minor, currency]
+      properties:
+        source_wallet_id:
+          $ref: '#/components/schemas/UUID'
+        destination_wallet_id:
+          $ref: '#/components/schemas/UUID'
+        amount_minor:
+          $ref: '#/components/schemas/AmountMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reference:
+          type: string
+          maxLength: 200
+    TransferMoneyCommand:
+      allOf:
+        - $ref: '#/components/schemas/MoneyCommand'
+        - type: object
+          required: [transfer_id]
+          properties:
+            transfer_id:
+              $ref: '#/components/schemas/UUID'
+    TransferResponse:
+      type: object
+      required: [transfer_id, state, amount_minor, currency]
+      properties:
+        transfer_id:
+          $ref: '#/components/schemas/UUID'
+        state:
+          type: string
+          enum: [CREATED, RESERVING, RESERVED, PENDING_CREDIT, PENDING_CREDITED, CAPTURING, CAPTURED, FINALIZING, COMPLETED, FAILED, COMPENSATION_PENDING, COMPENSATING, COMPENSATED, RECONCILIATION_REQUIRED]
+        amount_minor:
+          $ref: '#/components/schemas/AmountMinor'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        source_wallet_id:
+          $ref: '#/components/schemas/UUID'
+        destination_wallet_id:
+          $ref: '#/components/schemas/UUID'
+        read_model_consistent_through:
+          type: object
+          additionalProperties: true
+    OperationResponse:
+      type: object
+      required: [operation_id, status]
+      properties:
+        operation_id:
+          $ref: '#/components/schemas/UUID'
+        status:
+          type: string
+        journal_transaction_id:
+          $ref: '#/components/schemas/UUID'
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+            retryable:
+              type: boolean
+            details:
+              type: object
+              additionalProperties: true
