@@ -24,7 +24,7 @@ sequenceDiagram
     N-->>O: publish ACK
     O->>DB: mark outbox delivered/attempt metadata
     N->>C: deliver event
-    C->>I: BEGIN; insert inbox key
+    C->>I: BEGIN and insert inbox key
     C->>I: apply projection and cursor atomically
     C->>I: COMMIT
     C-->>N: ACK

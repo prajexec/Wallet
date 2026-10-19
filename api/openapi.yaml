@@ -2,16 +2,25 @@ openapi: 3.1.0
 info:
   title: Digital Wallet API
   version: 0.1.0
+  license:
+    name: Internal project contract
+    identifier: NOASSERTION
   description: |
     Phase 1 contract for the fintech-grade digital wallet backend.
     Monetary values are integer minor units and v1 supports USD only.
 servers:
-  - url: http://localhost:8080
-    description: Local gateway placeholder
+  - url: https://api.digital-wallet.invalid
+    description: Deployment-specific API endpoint
+security: []
 tags:
   - name: Wallets
+    description: Public wallet commands and authoritative reads.
   - name: Transfers
+    description: Public wallet-to-wallet transfer commands and inspection.
   - name: Internal wallet
+    description: Service-to-service wallet operations; protected by a service token.
+  - name: Health
+    description: Liveness and dependency-aware readiness probes.
 paths:
   /v1/wallets:
     post:
@@ -22,6 +31,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -31,6 +41,9 @@ paths:
       responses:
         '201':
           description: Wallet created
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -73,6 +86,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EntryListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/wallets/{wallet_id}/deposits:
     post:
       tags: [Wallets]
@@ -83,6 +98,7 @@ paths:
         - $ref: '#/components/parameters/WalletId'
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -92,6 +108,9 @@ paths:
       responses:
         '201':
           description: Deposit journal entry
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -110,6 +129,7 @@ paths:
         - $ref: '#/components/parameters/WalletId'
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -119,6 +139,9 @@ paths:
       responses:
         '201':
           description: Withdrawal journal entry
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -140,6 +163,7 @@ paths:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/CorrelationId'
       requestBody:
         required: true
         content:
@@ -149,6 +173,9 @@ paths:
       responses:
         '202':
           description: Transfer accepted by the saga
+          headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -165,6 +192,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/TransferId'
+        - $ref: '#/components/parameters/RequireConsistentThrough'
       responses:
         '200':
           description: Transfer state
@@ -313,7 +341,7 @@ paths:
         - serviceToken: []
       parameters:
         - $ref: '#/components/parameters/TenantId'
-        - $ref: '#/components/parameters/OperationId'
+        - $ref: '#/components/parameters/OperationIdPath'
       responses:
         '200':
           description: Known operation status
@@ -323,6 +351,40 @@ paths:
                 $ref: '#/components/schemas/OperationResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Process liveness
+      operationId: healthz
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Dependency-aware readiness
+      operationId: readyz
+      responses:
+        '200':
+          description: Required dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          description: Required dependency is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
 components:
   securitySchemes:
     serviceToken:
@@ -369,6 +431,26 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/UUID'
+    OperationIdPath:
+      name: operation_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 200
+    RequireConsistentThrough:
+      name: X-Require-Consistent-Through
+      in: header
+      required: false
+      schema:
+        type: string
+        description: JSON projection watermark requirement.
     Cursor:
       name: cursor
       in: query
@@ -403,10 +485,17 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+  headers:
+    IdempotencyReplayed:
+      description: True when the response is the stored result of a duplicate idempotent request.
+      schema:
+        type: boolean
   schemas:
     UUID:
       type: string
       format: uuid
+      pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+      description: UUIDv7 generated by the service or caller according to the operation contract.
     Currency:
       type: string
       enum: [USD]
@@ -596,3 +685,14 @@ components:
             details:
               type: object
               additionalProperties: true
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            type: string

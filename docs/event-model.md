@@ -7,7 +7,7 @@ Events are durable integration contracts. They are emitted only after the owning
 ```json
 {
   "event_id": "0192f4b7-6d92-7a4d-8cb5-1b3f9d8f1111",
-  "event_type": "wallet.journal_entry_posted",
+  "event_type": "wallet.deposit_posted",
   "schema_version": 1,
   "occurred_at": "2026-10-19T12:00:00.000Z",
   "tenant_id": "0192f4b7-6d92-7a4d-8cb5-1b3f9d8f2222",
@@ -29,7 +29,7 @@ Events are durable integration contracts. They are emitted only after the owning
 | `occurred_at` | UTC commit-side timestamp, not a client-supplied time. |
 | `tenant_id` | Required on every event and used in consumer keys. |
 | `aggregate_*` | Ordering key and monotonic version within a tenant aggregate. |
-| `producer` | Logical service instance that owns the event. |
+| `producer` | Logical service instance that owns the event, such as `wallet-source`; transfer events use `transfer`. |
 | `correlation_id` | End-to-end command or transfer correlation. |
 | `causation_id` | Immediate command/event that caused this event, when known. |
 | `data` | Typed payload; amounts are integer minor units. |
@@ -39,15 +39,15 @@ Events are durable integration contracts. They are emitted only after the owning
 
 | Event | Producer | Aggregate | Meaning |
 | --- | --- | --- | --- |
-| `wallet.created` | wallet | wallet | Wallet and its account set were created. |
-| `wallet.deposit_posted` | wallet | wallet | A balanced journal entry credited a wallet from an allowed v1 funding source. |
-| `wallet.withdrawal_posted` | wallet | wallet | A balanced journal entry debited a wallet after an availability check. |
-| `wallet.reservation_created` | wallet | wallet | Funds were moved into a journal-backed transfer hold. |
-| `wallet.reservation_captured` | wallet | wallet | A held amount was committed to outbound settlement. |
-| `wallet.reservation_released` | wallet | wallet | A held amount was returned after a safe, confirmed failure. |
-| `wallet.pending_credit_created` | wallet | wallet | Destination received a pending credit backed by an inbound settlement account. |
-| `wallet.pending_credit_finalized` | wallet | wallet | Pending credit became spendable wallet balance. |
-| `wallet.compensation_posted` | wallet | wallet | An idempotent reversal entry was appended. |
+| `wallet.created` | wallet instance | wallet | Wallet and its account set were created. |
+| `wallet.deposit_posted` | wallet instance | wallet | A balanced journal entry credited a wallet from an allowed v1 funding source. |
+| `wallet.withdrawal_posted` | wallet instance | wallet | A balanced journal entry debited a wallet after an availability check. |
+| `wallet.reservation_created` | wallet instance | wallet | Funds were moved into a journal-backed transfer hold. |
+| `wallet.reservation_captured` | wallet instance | wallet | A held amount was committed to outbound settlement. |
+| `wallet.reservation_released` | wallet instance | wallet | A held amount was returned after a safe, confirmed failure. |
+| `wallet.pending_credit_created` | wallet instance | wallet | Destination received a pending credit backed by an inbound settlement account. |
+| `wallet.pending_credit_finalized` | wallet instance | wallet | Pending credit became spendable wallet balance. |
+| `wallet.compensation_posted` | wallet instance | wallet | An idempotent reversal entry was appended. |
 | `transfer.created` | transfer | transfer | Transfer aggregate and saga were accepted. |
 | `transfer.step_changed` | transfer | transfer | Saga step entered, retried, succeeded, or failed. |
 | `transfer.completed` | transfer | transfer | Source capture and destination finalization both succeeded. |

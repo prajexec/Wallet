@@ -53,10 +53,9 @@ These endpoints are service-to-service only and must not be exposed by a public 
 | `POST /internal/v1/wallets/{wallet_id}/captures` | Capture a confirmed reservation. | `transfer_id:capture`. |
 | `POST /internal/v1/wallets/{wallet_id}/finalizations` | Make pending credit spendable. | `transfer_id:finalize`. |
 | `POST /internal/v1/wallets/{wallet_id}/compensations` | Append a reversal for a confirmed side effect. | `transfer_id:step:compensate`. |
-| `GET /internal/v1/operations/{operation_id}` | Resolve an ambiguous operation by stable operation ID. | Read-only lookup. |
-| `GET /internal/v1/health/ready` | Dependency-aware readiness. | N/A. |
+| `GET /internal/v1/operations/{operation_id}` | Resolve an ambiguous operation by stable UUIDv7 operation ID. | Read-only lookup. |
 
-An internal command is accepted only when the wallet service's configured instance owns the referenced wallet. The transfer service receives facts and operation IDs, not database access.
+An internal command is accepted only when the wallet service's configured instance owns the referenced wallet. The transfer service receives facts and operation IDs, not database access. The `X-Operation-ID` header is a UUIDv7 generated once per saga step and stored in `transfer_steps.operation_id`; the string idempotency key is separately derived as `transfer_id:step`.
 
 ## Idempotency semantics
 
@@ -71,4 +70,4 @@ Idempotency records are tenant-scoped and retained at least as long as the busin
 
 ## Health and consistency
 
-Every service exposes `/health/live` for process liveness and `/health/ready` for required dependencies. Readiness does not imply the projector is caught up. Read-model responses include a watermark, and authoritative wallet reads do not rely on NATS or the projector.
+Every service exposes `/healthz` for process liveness and `/readyz` for required dependencies. Readiness does not imply the projector is caught up. Read-model responses include a watermark, and authoritative wallet reads do not rely on NATS or the projector.

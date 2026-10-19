@@ -30,10 +30,12 @@ stateDiagram-v2
     COMPENSATING --> COMPENSATED: idempotent reversal success
     COMPENSATING --> COMPENSATING: transient compensation failure / retry
     COMPENSATING --> RECONCILIATION_REQUIRED: ambiguous reversal
+    RECONCILIATION_REQUIRED --> CAPTURING: status absent / resume capture
+    RECONCILIATION_REQUIRED --> FINALIZING: capture confirmed / resume finalize
+    RECONCILIATION_REQUIRED --> COMPENSATION_PENDING: confirmed side effect cannot continue
     COMPLETED --> [*]
     FAILED --> [*]
     COMPENSATED --> [*]
-    RECONCILIATION_REQUIRED --> [*]
 
     note right of RESERVING
       Retry edges are bounded by
@@ -92,7 +94,7 @@ sequenceDiagram
     T->>T: mark COMPLETED + emit transfer.completed
     S-->>J: source outbox events
     D-->>J: destination outbox events
-    T-->>C: GET /v1/transfers/{id} => COMPLETED
+    T-->>C: GET /v1/transfers/{transfer_id} => COMPLETED
 ```
 
 ## Failure paths
@@ -116,7 +118,7 @@ sequenceDiagram
     T->>S: capture
     S--xT: timeout after request may have committed
     T->>T: RECONCILIATION_REQUIRED
-    T->>R: create exception; no automatic compensation
+    T->>R: create exception and stop automatic compensation
     R->>S: query capture status by operation_id
     alt capture absent
         S-->>R: NOT_FOUND / safe to retry

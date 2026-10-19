@@ -11,8 +11,8 @@ erDiagram
     accounts ||--o{ journal_postings : receives
     journal_transactions ||--|{ journal_postings : contains
     wallets ||--o{ wallet_operations : idempotently_handles
-    journal_transactions ||--o| domain_events : emits
-    domain_events ||--o| outbox : publishes
+    journal_transactions ||--|| domain_events : emits
+    domain_events ||--|| outbox : publishes
     wallets ||--o{ reservations : holds
 
     tenants {
@@ -21,7 +21,7 @@ erDiagram
     wallets {
         uuid tenant_id PK,FK
         uuid wallet_id PK
-        uuid aggregate_version
+        bigint aggregate_version
         string status
     }
     accounts {
@@ -53,12 +53,14 @@ erDiagram
         uuid event_id PK
         uuid journal_transaction_id FK
         string event_type
+        int schema_version
         bigint aggregate_version
         jsonb payload
     }
     outbox {
         uuid tenant_id PK,FK
         uuid event_id PK
+        jsonb payload
         string status
         int attempts
         timestamp available_at
@@ -90,7 +92,7 @@ erDiagram
     transfers ||--o{ reconciliation_exceptions : may_create
     transfers ||--o{ transfer_operations : deduplicates
     transfers ||--o{ transfer_events : records
-    transfer_events ||--o| outbox : publishes
+    transfer_events ||--|| outbox : publishes
 
     tenants {
         uuid tenant_id PK
@@ -123,6 +125,8 @@ erDiagram
     transfer_events {
         uuid tenant_id PK,FK
         uuid event_id PK
+        string event_type
+        int schema_version
         uuid transfer_id FK
         bigint aggregate_version
         jsonb payload
@@ -130,6 +134,7 @@ erDiagram
     outbox {
         uuid tenant_id PK,FK
         uuid event_id PK
+        jsonb payload
         string status
         int attempts
     }
@@ -157,6 +162,7 @@ erDiagram
     reorder_buffer ||--o{ inbox_events : awaits
 
     projection_versions {
+        uuid tenant_id PK,FK
         string projection_name PK
         int active_version
         int previous_version
@@ -165,6 +171,7 @@ erDiagram
     projection_cursors {
         uuid tenant_id PK
         string consumer_name PK
+        string projection_name PK
         uuid aggregate_id PK
         bigint current_version
         timestamp updated_at
@@ -180,6 +187,7 @@ erDiagram
     reorder_buffer {
         uuid tenant_id PK
         string consumer_name PK
+        string projection_name PK
         uuid aggregate_id PK
         bigint aggregate_version PK
         jsonb event_payload
