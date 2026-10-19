@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"digitalwallet/services/projector/internal/config"
 	"digitalwallet/services/projector/internal/consumer"
@@ -47,12 +48,48 @@ func main() {
 		logger.Error("bootstrap projector consumer", "error", err)
 		os.Exit(1)
 	}
+
+	pullSub, err := jetStream.PullSubscribe("", cfg.ConsumerName, nats.Bind(cfg.StreamName, cfg.ConsumerName))
+	if err != nil {
+		logger.Error("subscribe projector pull consumer", "error", err)
+		os.Exit(1)
+	}
+
+	consumerRunner := consumer.NewRunner(database, pullSub, &consumer.AppliedEventsLogHandler{ConsumerName: cfg.ConsumerName}, consumer.RunnerConfig{
+		StreamName:   cfg.StreamName,
+		ConsumerName: cfg.ConsumerName,
+		BatchSize:    10,
+		FetchTimeout: time.Second,
+		MaxDeliver:   5,
+		Logger:       logger,
+	})
+
+	gapSweeper := consumer.NewGapSweeper(database, consumer.SweeperConfig{
+		ConsumerName: cfg.ConsumerName,
+		GapWindow:    cfg.GapWindow,
+		PollInterval: time.Second,
+		Logger:       logger,
+	})
+
 	httpServer := server.New(cfg, logger, identifiers.NewGenerator(), server.Dependencies{
 		Postgres: database.PingContext,
 		NATS:     func(context.Context) error { return natsConnection.FlushTimeout(cfg.HealthTimeout) },
 	})
 	rootContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	go func() {
+		if err := consumerRunner.Run(rootContext); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("consumer runner error", "error", err)
+		}
+	}()
+
+	go func() {
+		if err := gapSweeper.Run(rootContext); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("gap sweeper error", "error", err)
+		}
+	}()
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
 	select {
@@ -64,6 +101,8 @@ func main() {
 	case <-rootContext.Done():
 		shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
+		_ = consumerRunner.Stop(shutdownContext)
+		_ = gapSweeper.Stop(shutdownContext)
 		if err := httpServer.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("shutdown HTTP server", "error", err)
 			os.Exit(1)

@@ -4,6 +4,7 @@ package identifiers
 
 import (
 	"crypto/rand"
+	"database/sql/driver"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -335,6 +336,46 @@ func (id *UUID) UnmarshalJSON(value []byte) error {
 		return fmt.Errorf("UUID must be a string: %w", err)
 	}
 	return id.UnmarshalText([]byte(text))
+}
+
+// Scan implements sql.Scanner for database column deserialization.
+func (id *UUID) Scan(src any) error {
+	if id == nil {
+		return errors.New("nil UUID destination")
+	}
+	switch value := src.(type) {
+	case string:
+		parsed, err := Parse(value)
+		if err != nil {
+			return err
+		}
+		*id = parsed
+		return nil
+	case []byte:
+		if len(value) == 16 {
+			copy(id[:], value)
+			return nil
+		}
+		parsed, err := Parse(string(value))
+		if err != nil {
+			return err
+		}
+		*id = parsed
+		return nil
+	case nil:
+		*id = UUID{}
+		return nil
+	default:
+		return fmt.Errorf("cannot scan %T into UUID", src)
+	}
+}
+
+// Value implements driver.Valuer for database binding.
+func (id UUID) Value() (driver.Value, error) {
+	if id.IsZero() {
+		return nil, nil
+	}
+	return id.String(), nil
 }
 
 func max(a, b uint64) uint64 {
