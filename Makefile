@@ -67,4 +67,10 @@ role-isolation:
 	@until $(COMPOSE) exec -T postgres pg_isready -U postgres -d postgres >/dev/null 2>&1; do sleep 1; done
 	./scripts/test-role-isolation.sh
 
-ci: docs-check build test test-race vet lint sqlc-check check-boundaries role-isolation
+test-integration:
+	$(COMPOSE) up -d postgres
+	@until $(COMPOSE) exec -T postgres pg_isready -U postgres -d postgres >/dev/null 2>&1; do sleep 1; done
+	$(MAKE) migrate-wallet-source
+	(cd services/wallet && WALLET_TEST_DATABASE_URL="$(WALLET_SOURCE_DATABASE_URL)" go test -race ./internal/integration)
+
+ci: docs-check build test test-race vet lint sqlc-check check-boundaries role-isolation test-integration
