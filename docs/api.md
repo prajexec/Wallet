@@ -26,17 +26,18 @@ Errors use:
 }
 ```
 
-`409` is used for idempotency-key reuse with a different request fingerprint, invalid state transitions, projection lag that cannot satisfy a requested watermark, and known concurrency conflicts. `422` is used for validation and insufficient funds. `503` indicates a dependency or service outage and is retryable only according to the caller's operation semantics.
+`409` is used for invalid state transitions, projection lag that cannot satisfy a requested watermark, and known concurrency conflicts. `422` is used for validation, insufficient funds, and idempotency-key reuse with a different request fingerprint. `503` indicates a dependency or service outage and is retryable only according to the caller's operation semantics.
 
 ## Public endpoints
 
 | Method and path | Owner | Purpose | Idempotency |
 | --- | --- | --- | --- |
 | `POST /v1/wallets` | wallet | Create a wallet and its USD account set. | `Idempotency-Key` required; same request returns original wallet. |
+| `GET /v1/wallets/{wallet_id}` | wallet | Read wallet metadata in tenant scope. | N/A. |
 | `GET /v1/wallets/{wallet_id}/balance` | wallet | Authoritative journal-derived balance. | N/A. |
 | `GET /v1/wallets/{wallet_id}/entries` | wallet | Authoritative journal entry history. | N/A. |
-| `POST /v1/wallets/{wallet_id}/deposits` | wallet | Post an allowed v1 deposit. | Key + request fingerprint; replay returns original entry. |
-| `POST /v1/wallets/{wallet_id}/withdrawals` | wallet | Post a withdrawal after available check. | Key + request fingerprint; replay returns original entry. |
+| `POST /v1/wallets/{wallet_id}/deposit` | wallet | Post an allowed v1 deposit. | Key + request fingerprint; replay returns original entry. |
+| `POST /v1/wallets/{wallet_id}/withdraw` | wallet | Post a withdrawal after available check. | Key + request fingerprint; replay returns original entry. |
 | `POST /v1/transfers` | transfer | Create and start a transfer saga. | Key + request fingerprint; replay returns original transfer. |
 | `GET /v1/transfers/{transfer_id}` | transfer | Inspect transfer state and step outcomes. | N/A. |
 
@@ -63,7 +64,7 @@ The server hashes the normalized request body, tenant, route, and operation scop
 
 1. same fingerprint and completed result: return the original status/body and set `Idempotency-Replayed: true`;
 2. same fingerprint while the first request is in progress: return `409 request_in_progress` or a bounded `202`, as specified by the endpoint;
-3. different fingerprint: return `409 idempotency_key_reused`;
+3. different fingerprint: return `422 idempotency_key_reused`;
 4. an ambiguous transport outcome: the caller retries with the same key or queries the operation; it must not mint a new key to guess.
 
 Idempotency records are tenant-scoped and retained at least as long as the business replay window. A database unique constraint is the final guard against concurrent duplicate commands.
@@ -71,3 +72,5 @@ Idempotency records are tenant-scoped and retained at least as long as the busin
 ## Health and consistency
 
 Every service exposes `/healthz` for process liveness and `/readyz` for required dependencies. Readiness does not imply the projector is caught up. Read-model responses include a watermark, and authoritative wallet reads do not rely on NATS or the projector.
+
+Authoritative wallet balance responses contain `authoritative: true` and do not include `read_model_consistent_through`; that field is reserved for projector-backed query responses. Every wallet command takes `X-Tenant-ID`, and every repository call receives the tenant explicitly rather than deriving it from a wallet ID alone.

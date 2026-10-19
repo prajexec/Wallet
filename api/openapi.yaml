@@ -6,7 +6,7 @@ info:
     name: Internal project contract
     identifier: NOASSERTION
   description: |
-    Phase 1 contract for the fintech-grade digital wallet backend.
+    Phase 3 immutable-ledger contract for the fintech-grade digital wallet backend.
     Monetary values are integer minor units and v1 supports USD only.
 servers:
   - url: https://api.digital-wallet.invalid
@@ -52,6 +52,23 @@ paths:
           $ref: '#/components/responses/IdempotencyConflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+  /v1/wallets/{wallet_id}:
+    get:
+      tags: [Wallets]
+      summary: Read wallet metadata
+      operationId: getWallet
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+      responses:
+        '200':
+          description: Wallet metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/wallets/{wallet_id}/balance:
     get:
       tags: [Wallets]
@@ -88,7 +105,7 @@ paths:
                 $ref: '#/components/schemas/EntryListResponse'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/wallets/{wallet_id}/deposits:
+  /v1/wallets/{wallet_id}/deposit:
     post:
       tags: [Wallets]
       summary: Post a deposit
@@ -119,7 +136,7 @@ paths:
           $ref: '#/components/responses/IdempotencyConflict'
         '422':
           $ref: '#/components/responses/ValidationError'
-  /v1/wallets/{wallet_id}/withdrawals:
+  /v1/wallets/{wallet_id}/withdraw:
     post:
       tags: [Wallets]
       summary: Post a withdrawal
@@ -524,17 +541,22 @@ components:
           maxLength: 200
     WalletResponse:
       type: object
-      required: [wallet_id, tenant_id, currency, status]
+      required: [wallet_id, tenant_id, account_id, currency, status, created_at]
       properties:
         wallet_id:
           $ref: '#/components/schemas/UUID'
         tenant_id:
+          $ref: '#/components/schemas/UUID'
+        account_id:
           $ref: '#/components/schemas/UUID'
         currency:
           $ref: '#/components/schemas/Currency'
         status:
           type: string
           enum: [ACTIVE, CLOSED]
+        created_at:
+          type: string
+          format: date-time
     Balance:
       type: object
       required: [currency, current_minor, held_minor, available_minor]
@@ -565,11 +587,13 @@ components:
           const: true
     JournalCommandResponse:
       type: object
-      required: [operation_id, journal_transaction_id, amount_minor, currency]
+      required: [operation_id, journal_transaction_id, event_id, amount_minor, currency]
       properties:
         operation_id:
           $ref: '#/components/schemas/UUID'
         journal_transaction_id:
+          $ref: '#/components/schemas/UUID'
+        event_id:
           $ref: '#/components/schemas/UUID'
         amount_minor:
           $ref: '#/components/schemas/AmountMinor'

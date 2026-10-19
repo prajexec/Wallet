@@ -1,87 +1,113 @@
 # Data model
 
-All tables have `tenant_id NOT NULL`. Foreign keys that cross tables are composite `(tenant_id, referenced_id)` keys. The examples below show the contract shape; physical names may be refined during migration implementation without weakening the constraints.
+All tables have `tenant_id NOT NULL`. Foreign keys that cross tables are composite `(tenant_id, referenced_id)` keys. The wallet schema below is implemented in Phase 3; transfer and read schemas remain the Phase 1/2 contracts.
 
 ## Wallet database (one database per logical wallet instance)
 
 ```mermaid
 erDiagram
     tenants ||--o{ wallets : owns
-    wallets ||--o{ accounts : contains
+    wallets ||--|| accounts : uses
     accounts ||--o{ journal_postings : receives
     journal_transactions ||--|{ journal_postings : contains
-    wallets ||--o{ wallet_operations : idempotently_handles
-    journal_transactions ||--|| domain_events : emits
-    domain_events ||--|| outbox : publishes
-    wallets ||--o{ reservations : holds
+    wallets ||--o{ events : aggregates
+    events ||--|| outbox_messages : publishes
+    wallets ||--o{ idempotency_records : commands
 
     tenants {
         uuid tenant_id PK
     }
     wallets {
         uuid tenant_id PK,FK
-        uuid wallet_id PK
-        bigint aggregate_version
+        uuid id PK
+        uuid account_id FK
         string status
+        timestamp created_at
     }
     accounts {
         uuid tenant_id PK,FK
-        uuid account_id PK
-        uuid wallet_id FK
-        string account_type
+        uuid id PK
+        string kind
+        string name
         string currency
+        timestamp created_at
     }
     journal_transactions {
         uuid tenant_id PK,FK
-        uuid journal_transaction_id PK
-        uuid aggregate_id FK
-        bigint aggregate_version
-        string entry_type
-        timestamp occurred_at
+        uuid id PK
+        string operation_type
+        string external_reference
+        timestamp created_at
     }
     journal_postings {
         uuid tenant_id PK,FK
-        uuid posting_id PK
-        uuid journal_transaction_id FK
+        uuid id PK
+        uuid transaction_id FK
         uuid account_id FK
-        string currency
         string side
         bigint amount_minor
+        string currency
+        string entry_type
+        uuid transfer_id
+        timestamp created_at
     }
-    domain_events {
+    events {
         uuid tenant_id PK,FK
         uuid event_id PK
-        uuid journal_transaction_id FK
+        string aggregate_type
+        uuid aggregate_id
+        bigint aggregate_version
         string event_type
         int schema_version
-        bigint aggregate_version
+        uuid correlation_id
+        uuid causation_id
+        timestamp occurred_at
         jsonb payload
     }
-    outbox {
+    outbox_messages {
         uuid tenant_id PK,FK
-        uuid event_id PK
-        jsonb payload
-        string status
+        uuid id PK
+        uuid event_id FK
+        timestamp created_at
+        timestamp published_at
         int attempts
-        timestamp available_at
+        timestamp next_attempt_at
     }
-    wallet_operations {
+    idempotency_records {
         uuid tenant_id PK,FK
-        string operation_key PK
+        string key PK
         string request_hash
-        jsonb result
-    }
-    reservations {
-        uuid tenant_id PK,FK
-        uuid reservation_id PK
-        uuid wallet_id FK
-        bigint amount_minor
         string status
-        string operation_key
+        int response_status
+        jsonb response_body
+        timestamp created_at
     }
 ```
 
-There is no mutable wallet balance table in the authoritative wallet schema. `reservations` is a journal-linked state index, not a balance source; replay can rebuild it and the journal remains the money source.
+`accounts.kind` is either `user_wallet` or `system_clearing`. Each tenant has the four named clearing accounts (`deposit-clearing`, `withdrawal-clearing`, `outbound-clearing`, and `inbound-clearing`) created idempotently when first needed or during wallet creation. Only the user-wallet account is subject to the non-negative available-balance invariant.
+
+`events` and `outbox_messages` store the event envelope and are inserted in the same transaction as the wallet change. Phase 3 does not publish or update outbox rows; the relay begins in Phase 4.
+
+```mermaid
+flowchart TD
+    Begin[Begin wallet transaction] --> Lock[SELECT wallet/account FOR UPDATE]
+    Lock --> Idempotency{Existing tenant + key?}
+    Idempotency -->|same request hash| Replay[Return stored response]
+    Idempotency -->|different hash| Conflict[Return 422 idempotency conflict]
+    Idempotency -->|new key| Balance[SUM postings for account and currency]
+    Balance --> Holds[Subtract active holds; Phase 3 holds = 0]
+    Holds --> Sufficient{Available balance sufficient?}
+    Sufficient -->|no withdrawal funds| Reject[Rollback with insufficient funds]
+    Sufficient -->|yes / deposit| Journal[Insert journal transaction and postings]
+    Journal --> Event[Insert one event with next aggregate version]
+    Event --> Outbox[Insert one outbox_messages row]
+    Outbox --> Record[Insert idempotency response]
+    Record --> Commit[Commit; return response]
+```
+
+The database uses composite tenant foreign keys and triggers rejecting UPDATE, DELETE, and TRUNCATE on `journal_transactions`, `journal_postings`, and `events`. A deferred constraint trigger checks debit/credit equality for each transaction and posting currency at commit.
+
+There is no mutable wallet balance table anywhere in the wallet database. The authoritative balance is always recomputed from `journal_postings`; holds are a future extension point and are currently zero.
 
 ## Transfer database
 
