@@ -11,20 +11,23 @@ import (
 type LookupFunc func(string) (string, bool)
 
 type Config struct {
-	ServiceName      string
-	InstanceName     string
-	HTTPAddr         string
-	InternalHTTPAddr string
-	InternalToken    string
-	DatabaseURL      string
-	NATSURL          string
-	ShutdownTimeout  time.Duration
-	HealthTimeout    time.Duration
-	LogLevel         string
-	StreamName       string
-	ConsumerName     string
-	GapWindow        time.Duration
-	SubjectPrefix    string
+	ServiceName         string
+	InstanceName        string
+	HTTPAddr            string
+	InternalHTTPAddr    string
+	InternalToken       string
+	DatabaseURL         string
+	NATSURL             string
+	ShutdownTimeout     time.Duration
+	HealthTimeout       time.Duration
+	LogLevel            string
+	StreamName          string
+	ConsumerName        string
+	GapWindow           time.Duration
+	SubjectPrefix       string
+	WalletVerifyURLs    string
+	WalletVerifyToken   string
+	VerificationTimeout time.Duration
 }
 
 func Load() (Config, error) { return LoadFrom(os.LookupEnv) }
@@ -34,20 +37,23 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		return Config{}, fmt.Errorf("configuration lookup is nil")
 	}
 	cfg := Config{
-		ServiceName:      valueOr(lookup, "SERVICE_NAME", "projector"),
-		InstanceName:     valueOr(lookup, "INSTANCE_NAME", "projector"),
-		HTTPAddr:         valueOr(lookup, "HTTP_ADDR", ":8080"),
-		InternalHTTPAddr: valueOr(lookup, "INTERNAL_HTTP_ADDR", ":8085"),
-		InternalToken:    valueOr(lookup, "INTERNAL_TOKEN", "internal-dev-token"),
-		DatabaseURL:      valueOr(lookup, "DATABASE_URL", ""),
-		NATSURL:          valueOr(lookup, "NATS_URL", ""),
-		ShutdownTimeout:  durationOr(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second),
-		HealthTimeout:    durationOr(lookup, "HEALTH_TIMEOUT", 2*time.Second),
-		LogLevel:         strings.ToLower(valueOr(lookup, "LOG_LEVEL", "info")),
-		StreamName:       valueOr(lookup, "NATS_STREAM", "WALLET_EVENTS"),
-		ConsumerName:     valueOr(lookup, "NATS_CONSUMER", "projector"),
-		GapWindow:        durationOr(lookup, "ORDERING_GAP_WINDOW", 30*time.Second),
-		SubjectPrefix:    valueOr(lookup, "NATS_SUBJECT_PREFIX", "events"),
+		ServiceName:         valueOr(lookup, "SERVICE_NAME", "projector"),
+		InstanceName:        valueOr(lookup, "INSTANCE_NAME", "projector"),
+		HTTPAddr:            valueOr(lookup, "HTTP_ADDR", ":8080"),
+		InternalHTTPAddr:    valueOr(lookup, "INTERNAL_HTTP_ADDR", ":8085"),
+		InternalToken:       valueOr(lookup, "INTERNAL_TOKEN", "internal-dev-token"),
+		DatabaseURL:         valueOr(lookup, "DATABASE_URL", ""),
+		NATSURL:             valueOr(lookup, "NATS_URL", ""),
+		ShutdownTimeout:     durationOr(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second),
+		HealthTimeout:       durationOr(lookup, "HEALTH_TIMEOUT", 2*time.Second),
+		LogLevel:            strings.ToLower(valueOr(lookup, "LOG_LEVEL", "info")),
+		StreamName:          valueOr(lookup, "NATS_STREAM", "WALLET_EVENTS"),
+		ConsumerName:        valueOr(lookup, "NATS_CONSUMER", "projector"),
+		GapWindow:           durationOr(lookup, "ORDERING_GAP_WINDOW", 30*time.Second),
+		SubjectPrefix:       valueOr(lookup, "NATS_SUBJECT_PREFIX", "events"),
+		WalletVerifyURLs:    valueOr(lookup, "WALLET_VERIFY_URLS", ""),
+		WalletVerifyToken:   valueOr(lookup, "WALLET_VERIFY_TOKEN", valueOr(lookup, "INTERNAL_TOKEN", "internal-dev-token")),
+		VerificationTimeout: durationOr(lookup, "PROJECTION_VERIFICATION_TIMEOUT", 30*time.Second),
 	}
 	var problems []string
 	if strings.TrimSpace(cfg.ServiceName) == "" {
@@ -73,6 +79,12 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 	}
 	if cfg.GapWindow <= 0 {
 		problems = append(problems, "ORDERING_GAP_WINDOW must be greater than zero")
+	}
+	if strings.TrimSpace(cfg.WalletVerifyToken) == "" {
+		problems = append(problems, "WALLET_VERIFY_TOKEN must not be empty")
+	}
+	if cfg.VerificationTimeout <= 0 {
+		problems = append(problems, "PROJECTION_VERIFICATION_TIMEOUT must be greater than zero")
 	}
 	if err := validateURL("DATABASE_URL", cfg.DatabaseURL, "postgres", "postgresql"); err != nil {
 		problems = append(problems, err.Error())

@@ -1,6 +1,6 @@
 # Operations
 
-This document is the operational contract for the local foundation, Phase 3 wallet hardening, and Phase 4 delivery. The Compose file, migration targets, role-isolation checks, relay, projector consumer, and stats endpoint are executable.
+This document is the operational contract for the local foundation, wallet ledger, Phase 4 delivery, and Phase 5 projections. The Compose file, migration targets, role-isolation checks, relay, dual-slot projector, read APIs, verification endpoint, and projectorctl are executable.
 
 ## Local deployment
 
@@ -63,6 +63,8 @@ Compose supplies the following local values. In another environment, set equival
 | `SERVICE_NAME` | `wallet` | `transfer` | `projector` | Required logical service identity. |
 | `INSTANCE_NAME` | `wallet-source` / `wallet-destination` | `transfer` | `projector` | Required logical instance identity. |
 | `HTTP_ADDR` | `:8080` | `:8080` | `:8080` | Listener address. |
+| `INTERNAL_HTTP_ADDR` | `:8085` | N/A | `:8085` | Isolated internal listener. |
+| `INTERNAL_TOKEN` | local shared token | N/A | local shared token | Required on internal listener requests. |
 | `DATABASE_URL` | `postgres://.../wallet_source` or `wallet_destination` | `postgres://.../transfer` | `postgres://.../read` | PostgreSQL URL with a service-specific role. |
 | `NATS_URL` | `nats://nats:4222` | `nats://nats:4222` | `nats://nats:4222` | NATS URL; required for readiness. |
 | `LOG_LEVEL` | `info` | `info` | `info` | `debug`, `info`, `warn`, or `error`. |
@@ -76,6 +78,10 @@ Compose supplies the following local values. In another environment, set equival
 | `NATS_STREAM` | `WALLET_EVENTS` | `WALLET_EVENTS` | `WALLET_EVENTS` | File-backed event stream name. |
 | `NATS_CONSUMER` | N/A | N/A | `projector` | Durable projector pull consumer name. |
 | `ORDERING_GAP_WINDOW` | N/A | N/A | default `30s` | Missing predecessor window before an ordering gap row/alert. |
+| `NATS_SUBJECT_PREFIX` | default `events` | default `events` | default `events` | Event subject namespace; integration suites use an isolated prefix. |
+| `WALLET_VERIFY_URLS` | N/A | N/A | Compose wallet internal URLs | Comma-separated wallet verification endpoints used by promotion verification. |
+| `WALLET_VERIFY_TOKEN` | N/A | N/A | shared local internal token | Token for cross-tenant verification calls. |
+| `PROJECTION_VERIFICATION_TIMEOUT` | N/A | N/A | default `30s` | Full verification retry budget before promotion fails. |
 
 The database passwords in `deploy/docker-compose.yml` and `deploy/postgres/init/001-roles-and-databases.sql` are local-only development credentials.
 
@@ -104,7 +110,7 @@ make migrate-read
 make migrate
 ```
 
-The wallet directory contains the Phase 3 ledger and owner-separation migrations; transfer and projector/read retain their baseline plus owner-separation schema migration until their business tables are introduced. Service startup validates connectivity but does not silently run migrations. A migration may add constraints or tables but must not rewrite immutable journal history. Rollbacks that could destroy evidence are not automatic.
+The wallet directory contains the ledger and owner-separation migrations; projector/read now also contains the dual-slot projection tables and rebuild metadata. Service startup validates connectivity but does not silently run migrations. A migration may add constraints or tables but must not rewrite immutable journal history. Rollbacks that could destroy evidence are not automatic.
 
 For a fresh local volume, the init script creates `migrator_role` and makes it the owner of all four databases. For an existing deployment, a PostgreSQL administrator must transfer database/schema/object ownership to the migrator before applying the owner-separation migration; the migration cannot take ownership of objects owned by an unrelated role. Local validation can reset disposable state with `docker compose -f deploy/docker-compose.yml down -v` before `make up`.
 
@@ -138,8 +144,13 @@ All `/internal/*` routes are isolated on a dedicated secondary HTTP listener (`I
 | `walletctl entries` | Inspect immutable journal entries. |
 | `transferctl inspect` | Show saga steps, attempts, operation IDs, and exceptions. |
 | `transferctl reconcile` | Resolve/query an ambiguous operation; no silent adjustment. |
-| `projectorctl rebuild` | Build inactive projection version, validate, and optionally promote. |
-| `projectorctl rollback` | Atomically point to retained previous version. |
+| `make projectorctl` | Build the local projectorctl binary (ignored under `bin/`). |
+| `projectorctl rebuild [--auto-promote]` | Clear the inactive slot, replay durable event envelopes, verify, and optionally promote. |
+| `projectorctl status` | Show the latest rebuild state. |
+| `projectorctl promote --rebuild-id <uuid>` | Atomically point reads at a READY candidate. |
+| `projectorctl rollback` | Atomically point to the retained previous slot. |
+| `projectorctl retire` | Clear the inactive retained slot after the rollback window. |
+| `make dev-wipe-active-slot` | Disposable-dev-only wipe using `migrator_role`; never use in an acceptance run. |
 | `outboxctl inspect` | Inspect stale, failed, and repeatedly redelivered outbox rows. |
 
 ## Troubleshooting rules
@@ -149,5 +160,6 @@ All `/internal/*` routes are isolated on a dedicated secondary HTTP listener (`I
 - Transfer capture timeout: inspect operation status and open/reuse reconciliation exception; do not compensate on timeout alone.
 - Outbox backlog: inspect oldest row, relay errors, NATS health, and database locks; do not delete rows to reduce lag.
 - Projection checksum failure: keep the active version, retain failed rebuild evidence, and investigate source events.
+- Projection rebuild: run `make projectorctl`, then `DATABASE_URL=... bin/projectorctl rebuild`; inspect `status`, promote only a `READY` result, and use `rollback` if the active slot needs to be restored. The verifier compares wallet internal snapshots at equal versions and never repairs mismatches.
 - Negative available balance or journal imbalance: stop affected writes, page, and run replay/reconciliation; never insert an adjustment row outside the domain command.
 - `make role-isolation` fails: ensure the Compose PostgreSQL volume was initialized with the role script; a pre-existing volume does not rerun init scripts, so use `make down` followed by `docker compose -f deploy/docker-compose.yml down -v` only for disposable local data.

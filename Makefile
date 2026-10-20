@@ -21,7 +21,7 @@ WALLET_SOURCE_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_de
 WALLET_DESTINATION_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_destination_test?sslmode=disable
 READ_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/read_test?sslmode=disable
 
-.PHONY: build test test-race vet lint sqlc sqlc-check up down migrate migrate-test migrate-wallet-source migrate-wallet-destination migrate-wallet-source-test migrate-wallet-destination-test migrate-transfer migrate-read migrate-read-test docs-check check-boundaries role-isolation test-integration ci
+.PHONY: build test test-race vet lint sqlc sqlc-check projectorctl dev-wipe-active-slot up down migrate migrate-test migrate-wallet-source migrate-wallet-destination migrate-wallet-source-test migrate-wallet-destination-test migrate-transfer migrate-read migrate-read-test docs-check check-boundaries role-isolation test-integration ci
 
 build:
 	@set -e; for module in $(GO_MODULES); do (cd $$module && go build ./...); done
@@ -40,6 +40,13 @@ sqlc:
 
 sqlc-check: sqlc
 	@git diff --exit-code -- sqlc.yaml migrations/wallet migrations/projector services/wallet/internal/storage/generated services/wallet/internal/storage/queries services/projector/internal/storage/generated services/projector/internal/storage/queries
+
+projectorctl:
+	mkdir -p bin
+	go build -o bin/projectorctl ./services/projector/cmd/projectorctl
+
+dev-wipe-active-slot:
+	DATABASE_URL="$(READ_MIGRATOR_DATABASE_URL)" go run ./services/projector/cmd/projectorctl wipe-active
 
 lint:
 	@test -z "$$(gofmt -l $$(git ls-files '*.go'))" || (printf 'gofmt required for:\n%s\n' "$$(gofmt -l $$(git ls-files '*.go'))"; exit 1)

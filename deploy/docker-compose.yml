@@ -118,6 +118,8 @@ services:
       HTTP_ADDR: :8080
       INTERNAL_HTTP_ADDR: :8085
       INTERNAL_TOKEN: internal-secret-token
+      WALLET_VERIFY_URLS: http://wallet-source:8085,http://wallet-destination:8085
+      WALLET_VERIFY_TOKEN: internal-secret-token
       DATABASE_URL: postgres://projector_role:projector_dev_password@postgres:5432/read?sslmode=disable
       NATS_URL: nats://nats:4222
       LOG_LEVEL: info
