@@ -4,6 +4,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [Phase 4 — Outbox relay and ordered consumption] — 2026-10-20
+
+### Added
+
+- Added leased outbox relay worker in `services/wallet/internal/relay` with SKIP LOCKED claim transactions, deterministic backoff jitter, retry tracking, and column-level update grants.
+- Added file-backed JetStream WALLET_EVENTS stream bootstrap and durable projector pull consumer configuration with explicit AckWait, MaxDeliver, and FilterSubject.
+- Added pure aggregate version decision state machine in `shared/ordering` (InOrder, DuplicateOrStale, FutureBuffer, GapFillDrain).
+- Added transactional ordered consumer runner and gap detection sweeper in `services/projector/internal/consumer` with durable PostgreSQL tables (`inbox_messages`, `aggregate_cursors`, `buffered_events`, `ordering_gaps`, `dead_letter_events`, `applied_events_log`).
+- Added internal stats endpoints `GET /internal/v1/stats` on wallet and projector services for outbox/lag/gap/dead-letter observability.
+- Added randomized ordering property tests and complete failure injection integration test suite covering 10 scenarios across outbox relay, consumer ordering, gap sweeping, dead-letter recording, and end-to-end ledger/projector totals.
+
 ### Phase 3 hardening
 
 - Added dedicated migrator ownership and minimum runtime database grants, including append-only idempotency records and advisory-lock serialization.
