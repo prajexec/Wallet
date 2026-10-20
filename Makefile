@@ -73,9 +73,10 @@ role-isolation:
 	./scripts/test-role-isolation.sh
 
 test-integration:
-	$(COMPOSE) up -d postgres
+	$(COMPOSE) up -d postgres nats
 	@until $(COMPOSE) exec -T postgres pg_isready -U postgres -d postgres >/dev/null 2>&1; do sleep 1; done
-	$(MAKE) migrate-wallet-source
-	(cd services/wallet && WALLET_TEST_DATABASE_URL="$(WALLET_SOURCE_DATABASE_URL)" go test -race ./internal/integration)
+	$(MAKE) migrate
+	(cd services/wallet && WALLET_TEST_DATABASE_URL="$(WALLET_SOURCE_DATABASE_URL)" NATS_TEST_URL="nats://127.0.0.1:4222" go test -race ./internal/integration)
+	(cd services/projector && READ_TEST_DATABASE_URL="$(READ_DATABASE_URL)" WALLET_TEST_DATABASE_URL="$(WALLET_SOURCE_DATABASE_URL)" NATS_TEST_URL="nats://127.0.0.1:4222" go test -race ./internal/integration)
 
 ci: docs-check build test test-race vet lint sqlc-check check-boundaries role-isolation test-integration

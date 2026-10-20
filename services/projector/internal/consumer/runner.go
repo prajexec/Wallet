@@ -74,6 +74,10 @@ type RunnerConfig struct {
 	MaxDeliver   int
 	Logger       *slog.Logger
 	Now          func() time.Time
+
+	// beforeAck is intentionally unexported. Tests use it to simulate consumer
+	// crashes after the database transaction has committed but before msg.Ack().
+	beforeAck func(events.Envelope) error
 }
 
 func (c RunnerConfig) withDefaults() RunnerConfig {
@@ -136,6 +140,13 @@ func NewRunner(db *sql.DB, fetcher MessageFetcher, handler Handler, config Runne
 		handler: handler,
 		config:  config.withDefaults(),
 	}
+}
+
+// NewRunnerForTesting constructs a runner with an unexported test failpoint hook.
+// It is intended for integration test suites and cannot be injected via production NewRunner.
+func NewRunnerForTesting(db *sql.DB, fetcher MessageFetcher, handler Handler, config RunnerConfig, beforeAck func(events.Envelope) error) *Runner {
+	config.beforeAck = beforeAck
+	return NewRunner(db, fetcher, handler, config)
 }
 
 // Run processes messages until the context is canceled.
@@ -242,6 +253,13 @@ func (r *Runner) processOne(ctx context.Context, msg *nats.Msg) {
 		r.config.Logger.ErrorContext(ctx, "failed processing event, naking", "tenant_id", envelope.TenantID, "event_id", envelope.EventID, "delivery_count", deliveryCount, "error", err)
 		_ = msg.Nak()
 		return
+	}
+
+	if r.config.beforeAck != nil {
+		if hookErr := r.config.beforeAck(envelope); hookErr != nil {
+			r.config.Logger.ErrorContext(ctx, "consumer test failpoint before ack", "error", hookErr)
+			return
+		}
 	}
 
 	// ACK only after the database transaction has committed!
