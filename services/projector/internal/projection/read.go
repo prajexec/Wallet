@@ -15,34 +15,34 @@ import (
 var ErrNotFound = errors.New("projected wallet not found")
 
 type BalanceRead struct {
-	WalletID                   identifiers.UUID
-	Currency                   string
-	PostedBalanceMinor         int64
-	HeldBalanceMinor           int64
-	AvailableBalanceMinor      int64
-	ReadModelConsistentThrough int64
-	ProjectionSlot             string
-	UpdatedAt                  time.Time
+	WalletID                   identifiers.UUID `json:"wallet_id"`
+	Currency                   string           `json:"currency"`
+	PostedBalanceMinor         int64            `json:"posted_balance_minor"`
+	HeldBalanceMinor           int64            `json:"held_balance_minor"`
+	AvailableBalanceMinor      int64            `json:"available_balance_minor"`
+	ReadModelConsistentThrough int64            `json:"read_model_consistent_through"`
+	ProjectionSlot             string           `json:"projection_slot"`
+	UpdatedAt                  time.Time        `json:"updated_at"`
 }
 
 type EntryRead struct {
-	EntryVersion         int64
-	AggregateVersion     int64
-	EventID              identifiers.UUID
-	JournalTransactionID identifiers.UUID
-	EntryType            string
-	Side                 string
-	AmountMinor          int64
-	Currency             string
-	Reference            string
-	OccurredAt           time.Time
+	EntryVersion         int64            `json:"entry_version"`
+	AggregateVersion     int64            `json:"aggregate_version"`
+	EventID              identifiers.UUID `json:"event_id"`
+	JournalTransactionID identifiers.UUID `json:"journal_transaction_id"`
+	EntryType            string           `json:"entry_type"`
+	Side                 string           `json:"side"`
+	AmountMinor          int64            `json:"amount_minor"`
+	Currency             string           `json:"currency"`
+	Reference            string           `json:"reference"`
+	OccurredAt           time.Time        `json:"occurred_at"`
 }
 
 type EntryPage struct {
-	Entries                    []EntryRead
-	NextCursor                 string
-	ProjectionSlot             string
-	ReadModelConsistentThrough int64
+	Entries                    []EntryRead `json:"entries"`
+	NextCursor                 string      `json:"next_cursor,omitempty"`
+	ProjectionSlot             string      `json:"projection_slot"`
+	ReadModelConsistentThrough int64       `json:"read_model_consistent_through"`
 }
 
 type Store struct{ db *sql.DB }

@@ -926,9 +926,12 @@ components:
           format: date-time
     ReadEntry:
       type: object
-      required: [entry_version, event_id, journal_transaction_id, entry_type, amount_minor, currency, occurred_at]
+      required: [entry_version, aggregate_version, event_id, journal_transaction_id, entry_type, side, amount_minor, currency, occurred_at]
       properties:
         entry_version:
+          type: integer
+          format: int64
+        aggregate_version:
           type: integer
           format: int64
         event_id:
@@ -937,6 +940,9 @@ components:
           $ref: '#/components/schemas/UUID'
         entry_type:
           type: string
+        side:
+          type: string
+          enum: [DEBIT, CREDIT]
         amount_minor:
           type: integer
           format: int64
@@ -949,7 +955,7 @@ components:
           format: date-time
     ReadEntryListResponse:
       type: object
-      required: [entries, projection_slot, authoritative]
+      required: [entries, read_model_consistent_through, projection_slot, authoritative]
       properties:
         entries:
           type: array
@@ -957,6 +963,9 @@ components:
             $ref: '#/components/schemas/ReadEntry'
         next_cursor:
           type: string
+        read_model_consistent_through:
+          type: integer
+          format: int64
         projection_slot:
           type: string
           enum: [a, b]

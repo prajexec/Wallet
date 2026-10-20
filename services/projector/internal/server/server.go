@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"digitalwallet/services/projector/internal/config"
+	"digitalwallet/services/projector/internal/projection"
 	"digitalwallet/shared/identifiers"
 )
 
@@ -29,10 +31,16 @@ type StatsResponse struct {
 
 type StatsFunc func(context.Context) (StatsResponse, error)
 
+type ReadStore interface {
+	GetBalance(context.Context, identifiers.UUID, identifiers.UUID) (projection.BalanceRead, error)
+	ListEntries(context.Context, identifiers.UUID, identifiers.UUID, int64, int32) (projection.EntryPage, error)
+}
+
 type Dependencies struct {
 	Postgres CheckFunc
 	NATS     CheckFunc
 	Stats    StatsFunc
+	Read     ReadStore
 }
 
 type Server struct {
@@ -76,6 +84,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.HandleFunc("GET /v1/read/wallets/{wallet_id}/balance", s.readBalance)
+	mux.HandleFunc("GET /v1/read/wallets/{wallet_id}/entries", s.readEntries)
 	return s.middleware(mux)
 }
 
@@ -158,6 +168,127 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) readBalance(w http.ResponseWriter, r *http.Request) {
+	tenantID, walletID, ok := s.readIDs(w, r)
+	if !ok {
+		return
+	}
+	minVersion, wait, ok := readConsistency(w, r)
+	if !ok {
+		return
+	}
+	if s.dependencies.Read == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "projection read store is not configured"})
+		return
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		balance, err := s.dependencies.Read.GetBalance(r.Context(), tenantID, walletID)
+		if errors.Is(err, projection.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "not_found"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		if balance.ReadModelConsistentThrough >= minVersion {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"wallet_id": balance.WalletID, "currency": balance.Currency,
+				"posted_balance_minor": balance.PostedBalanceMinor, "available_balance_minor": balance.AvailableBalanceMinor,
+				"read_model_consistent_through": balance.ReadModelConsistentThrough, "authoritative": false,
+				"projection_slot": balance.ProjectionSlot, "updated_at": balance.UpdatedAt,
+			})
+			return
+		}
+		if time.Now().After(deadline) || wait == 0 {
+			w.Header().Set("Retry-After", "1")
+			writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{"code": "read_model_behind", "message": "projection has not reached min_version", "retryable": true}})
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+func (s *Server) readEntries(w http.ResponseWriter, r *http.Request) {
+	tenantID, walletID, ok := s.readIDs(w, r)
+	if !ok {
+		return
+	}
+	limit := int32(50)
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "limit must be between 1 and 100"})
+			return
+		}
+		limit = int32(parsed)
+	}
+	afterVersion := int64(0)
+	if value := r.URL.Query().Get("after_version"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "after_version must be non-negative"})
+			return
+		}
+		afterVersion = parsed
+	}
+	if s.dependencies.Read == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "projection read store is not configured"})
+		return
+	}
+	page, err := s.dependencies.Read.ListEntries(r.Context(), tenantID, walletID, afterVersion, limit)
+	if errors.Is(err, projection.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not_found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (s *Server) readIDs(w http.ResponseWriter, r *http.Request) (identifiers.UUID, identifiers.UUID, bool) {
+	tenantID, err := identifiers.Parse(r.Header.Get("X-Tenant-ID"))
+	if err != nil || tenantID.IsZero() || !tenantID.IsV7() {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "X-Tenant-ID must be a UUIDv7"})
+		return identifiers.UUID{}, identifiers.UUID{}, false
+	}
+	walletID, err := identifiers.Parse(r.PathValue("wallet_id"))
+	if err != nil || walletID.IsZero() || !walletID.IsV7() {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "wallet_id must be a UUIDv7"})
+		return identifiers.UUID{}, identifiers.UUID{}, false
+	}
+	return tenantID, walletID, true
+}
+
+func readConsistency(w http.ResponseWriter, r *http.Request) (int64, time.Duration, bool) {
+	minVersion := int64(0)
+	if value := r.URL.Query().Get("min_version"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 1 {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "min_version must be positive"})
+			return 0, 0, false
+		}
+		minVersion = parsed
+	}
+	waitMS := 0
+	if value := r.URL.Query().Get("wait_ms"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 || parsed > 5000 {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "wait_ms must be between 0 and 5000"})
+			return 0, 0, false
+		}
+		waitMS = parsed
+	}
+	return minVersion, time.Duration(waitMS) * time.Millisecond, true
 }
 
 func (s *Server) readyz(w http.ResponseWriter, request *http.Request) {

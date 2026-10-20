@@ -39,7 +39,7 @@ Errors use:
 | `POST /v1/wallets/{wallet_id}/deposit` | wallet | Post an allowed v1 deposit. Returns `aggregate_version`. | Key + request fingerprint; replay returns original entry. |
 | `POST /v1/wallets/{wallet_id}/withdraw` | wallet | Post a withdrawal after available check. Returns `aggregate_version`. | Key + request fingerprint; replay returns original entry. |
 | `GET /v1/read/wallets/{wallet_id}/balance` | projector | High-throughput read-model balance with read-your-writes support (`min_version`, `wait_ms`). | N/A. |
-| `GET /v1/read/wallets/{wallet_id}/entries` | projector | Read-model entry history keyset-paginated by entry version (`after_version`, `limit`). | N/A. |
+| `GET /v1/read/wallets/{wallet_id}/entries` | projector | Read-model entry history keyset-paginated by projection-local entry version (`after_version`, `limit`); includes side and aggregate version. | N/A. |
 | `POST /v1/transfers` | transfer | Create and start a transfer saga. | Key + request fingerprint; replay returns original transfer. |
 | `GET /v1/transfers/{transfer_id}` | transfer | Inspect transfer state and step outcomes. | N/A. |
 

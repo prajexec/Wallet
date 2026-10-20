@@ -6,12 +6,28 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"digitalwallet/services/projector/internal/config"
+	"digitalwallet/services/projector/internal/projection"
 	"digitalwallet/shared/identifiers"
 )
+
+type fakeReadStore struct {
+	balance projection.BalanceRead
+	page    projection.EntryPage
+	err     error
+}
+
+func (f fakeReadStore) GetBalance(context.Context, identifiers.UUID, identifiers.UUID) (projection.BalanceRead, error) {
+	return f.balance, f.err
+}
+
+func (f fakeReadStore) ListEntries(context.Context, identifiers.UUID, identifiers.UUID, int64, int32) (projection.EntryPage, error) {
+	return f.page, f.err
+}
 
 func TestHealthAndReady(t *testing.T) {
 	server := New(config.Config{HTTPAddr: ":8080", HealthTimeout: time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)), identifiers.NewDeterministicGenerator(), Dependencies{
@@ -79,5 +95,40 @@ func TestStatsEndpoint(t *testing.T) {
 	server.InternalHandler().ServeHTTP(validRec, validReq)
 	if validRec.Code != http.StatusOK {
 		t.Fatalf("internal listener valid token status = %d, want 200; body = %s", validRec.Code, validRec.Body.String())
+	}
+}
+
+func TestReadModelEndpointsSupportConsistencyAndPagination(t *testing.T) {
+	tenantID := identifiers.MustParse("0192f4b7-6d92-7a4d-8cb5-1b3f9d8f1111")
+	walletID := identifiers.MustParse("0192f4b7-6d92-7a4d-8cb5-1b3f9d8f2222")
+	server := New(config.Config{HTTPAddr: ":8080", HealthTimeout: time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)), identifiers.NewDeterministicGenerator(), Dependencies{
+		Read: fakeReadStore{
+			balance: projection.BalanceRead{WalletID: walletID, Currency: "USD", PostedBalanceMinor: 15, AvailableBalanceMinor: 15, ReadModelConsistentThrough: 3, ProjectionSlot: "a", UpdatedAt: time.Unix(1, 0).UTC()},
+			page:    projection.EntryPage{Entries: []projection.EntryRead{{EntryVersion: 1, AggregateVersion: 2, Currency: "USD", Side: "CREDIT", AmountMinor: 15}}, ProjectionSlot: "a", ReadModelConsistentThrough: 3},
+		},
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/read/wallets/"+walletID.String()+"/balance?min_version=3&wait_ms=0", nil)
+	request.Header.Set("X-Tenant-ID", tenantID.String())
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"authoritative":false`) || !strings.Contains(recorder.Body.String(), `"projection_slot":"a"`) {
+		t.Fatalf("balance response status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	behind := httptest.NewRequest(http.MethodGet, "/v1/read/wallets/"+walletID.String()+"/balance?min_version=4&wait_ms=0", nil)
+	behind.Header.Set("X-Tenant-ID", tenantID.String())
+	behindRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(behindRecorder, behind)
+	if behindRecorder.Code != http.StatusConflict || behindRecorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf("behind response status=%d headers=%v body=%s", behindRecorder.Code, behindRecorder.Header(), behindRecorder.Body.String())
+	}
+
+	entries := httptest.NewRequest(http.MethodGet, "/v1/read/wallets/"+walletID.String()+"/entries?after_version=0&limit=10", nil)
+	entries.Header.Set("X-Tenant-ID", tenantID.String())
+	entriesRecorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(entriesRecorder, entries)
+	if entriesRecorder.Code != http.StatusOK || !strings.Contains(entriesRecorder.Body.String(), `"entries"`) || !strings.Contains(entriesRecorder.Body.String(), `"read_model_consistent_through":3`) {
+		t.Fatalf("entries response status=%d body=%s", entriesRecorder.Code, entriesRecorder.Body.String())
 	}
 }
