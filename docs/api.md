@@ -32,12 +32,14 @@ Errors use:
 
 | Method and path | Owner | Purpose | Idempotency |
 | --- | --- | --- | --- |
-| `POST /v1/wallets` | wallet | Create a wallet and its USD account set. | `Idempotency-Key` required; same request returns original wallet. |
+| `POST /v1/wallets` | wallet | Create a wallet and its USD account set. Returns `aggregate_version: 1`. | `Idempotency-Key` required; same request returns original wallet. |
 | `GET /v1/wallets/{wallet_id}` | wallet | Read wallet metadata in tenant scope. | N/A. |
-| `GET /v1/wallets/{wallet_id}/balance` | wallet | Authoritative journal-derived balance. | N/A. |
+| `GET /v1/wallets/{wallet_id}/balance` | wallet | Authoritative journal-derived balance. Returns `as_of_version` in snapshot. | N/A. |
 | `GET /v1/wallets/{wallet_id}/entries` | wallet | Authoritative journal entry history. | N/A. |
-| `POST /v1/wallets/{wallet_id}/deposit` | wallet | Post an allowed v1 deposit. | Key + request fingerprint; replay returns original entry. |
-| `POST /v1/wallets/{wallet_id}/withdraw` | wallet | Post a withdrawal after available check. | Key + request fingerprint; replay returns original entry. |
+| `POST /v1/wallets/{wallet_id}/deposit` | wallet | Post an allowed v1 deposit. Returns `aggregate_version`. | Key + request fingerprint; replay returns original entry. |
+| `POST /v1/wallets/{wallet_id}/withdraw` | wallet | Post a withdrawal after available check. Returns `aggregate_version`. | Key + request fingerprint; replay returns original entry. |
+| `GET /v1/read/wallets/{wallet_id}/balance` | projector | High-throughput read-model balance with read-your-writes support (`min_version`, `wait_ms`). | N/A. |
+| `GET /v1/read/wallets/{wallet_id}/entries` | projector | Read-model entry history keyset-paginated by entry version (`after_version`, `limit`). | N/A. |
 | `POST /v1/transfers` | transfer | Create and start a transfer saga. | Key + request fingerprint; replay returns original transfer. |
 | `GET /v1/transfers/{transfer_id}` | transfer | Inspect transfer state and step outcomes. | N/A. |
 
@@ -52,6 +54,7 @@ Every request to the internal listener requires the `X-Internal-Token` HTTP head
 | Method and path | Purpose | Idempotency / auth |
 | --- | --- | --- |
 | `GET /internal/v1/stats` | Telemetry, outbox backlog, lag, gaps, and dead-letter statistics. | `X-Internal-Token`. |
+| `GET /internal/v1/wallets/verify` | Wallet cross-tenant verification scan returning `(wallet_id, currency, posted_balance_minor, as_of_version)` in keyset pages. | `X-Internal-Token`, read-only `REPEATABLE READ` snapshot. |
 | `POST /internal/v1/wallets/{wallet_id}/reservations` | Reserve source funds for a transfer. | `X-Internal-Token`, `transfer_id:reserve`; amount and tenant fingerprinted. |
 | `POST /internal/v1/wallets/{wallet_id}/pending-credits` | Create destination pending credit. | `X-Internal-Token`, `transfer_id:pending-credit`. |
 | `POST /internal/v1/wallets/{wallet_id}/captures` | Capture a confirmed reservation. | `X-Internal-Token`, `transfer_id:capture`. |

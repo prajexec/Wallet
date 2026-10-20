@@ -21,6 +21,8 @@ tags:
     description: Service-to-service wallet operations; protected by X-Internal-Token on the internal listener.
   - name: Internal management
     description: Service telemetry and operational metrics served on the internal listener.
+  - name: Projections
+    description: Query-optimized CQRS read models served by the projector.
   - name: Health
     description: Liveness and dependency-aware readiness probes.
 paths:
@@ -221,6 +223,78 @@ paths:
                 $ref: '#/components/schemas/TransferResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/read/wallets/{wallet_id}/balance:
+    get:
+      tags: [Projections]
+      summary: Read-model wallet balance with read-your-writes support
+      operationId: getReadModelBalance
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/MinVersion'
+        - $ref: '#/components/parameters/WaitMs'
+      responses:
+        '200':
+          description: Projected balance from the active slot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadBalanceResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Projection could not reach min_version before wait_ms expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /v1/read/wallets/{wallet_id}/entries:
+    get:
+      tags: [Projections]
+      summary: Keyset-paginated entry history from the active projection slot
+      operationId: listReadModelEntries
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/WalletId'
+        - $ref: '#/components/parameters/AfterVersion'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Projected entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadEntryListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /internal/v1/wallets/verify:
+    get:
+      tags: [Internal wallet]
+      summary: Keyset-paginated cross-tenant verification scan
+      operationId: verifyWallets
+      security:
+        - InternalTokenAuth: []
+      parameters:
+        - name: after_tenant_id
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - name: after_wallet_id
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Authoritative wallet balances and versions page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletVerificationPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /internal/v1/wallets/{wallet_id}/reservations:
     post:
       tags: [Internal wallet]
@@ -514,6 +588,34 @@ components:
         minimum: 1
         maximum: 100
         default: 50
+    MinVersion:
+      name: min_version
+      in: query
+      required: false
+      description: Target aggregate version required for read-your-writes consistency.
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    WaitMs:
+      name: wait_ms
+      in: query
+      required: false
+      description: Maximum milliseconds to wait for projection to catch up to min_version.
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 5000
+        default: 0
+    AfterVersion:
+      name: after_version
+      in: query
+      required: false
+      description: Exclusive lower bound on entry_version for keyset pagination.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
   responses:
     IdempotencyConflict:
       description: Idempotency key conflict or request in progress
@@ -578,7 +680,7 @@ components:
           maxLength: 200
     WalletResponse:
       type: object
-      required: [wallet_id, tenant_id, account_id, currency, status, created_at]
+      required: [wallet_id, tenant_id, account_id, currency, status, created_at, aggregate_version]
       properties:
         wallet_id:
           $ref: '#/components/schemas/UUID'
@@ -594,6 +696,10 @@ components:
         created_at:
           type: string
           format: date-time
+        aggregate_version:
+          type: integer
+          format: int64
+          minimum: 1
     Balance:
       type: object
       required: [currency, current_minor, held_minor, available_minor]
@@ -613,7 +719,7 @@ components:
           minimum: 0
     BalanceResponse:
       type: object
-      required: [wallet_id, balance, authoritative]
+      required: [wallet_id, balance, authoritative, as_of_version]
       properties:
         wallet_id:
           $ref: '#/components/schemas/UUID'
@@ -622,9 +728,13 @@ components:
         authoritative:
           type: boolean
           const: true
+        as_of_version:
+          type: integer
+          format: int64
+          minimum: 0
     JournalCommandResponse:
       type: object
-      required: [operation_id, journal_transaction_id, event_id, amount_minor, currency]
+      required: [operation_id, journal_transaction_id, event_id, amount_minor, currency, aggregate_version]
       properties:
         operation_id:
           $ref: '#/components/schemas/UUID'
@@ -636,6 +746,10 @@ components:
           $ref: '#/components/schemas/AmountMinor'
         currency:
           $ref: '#/components/schemas/Currency'
+        aggregate_version:
+          type: integer
+          format: int64
+          minimum: 1
     Entry:
       type: object
       required: [journal_transaction_id, occurred_at, postings]
@@ -783,3 +897,97 @@ components:
         dead_letter_count:
           type: integer
           format: int64
+    ReadBalanceResponse:
+      type: object
+      required: [wallet_id, currency, posted_balance_minor, available_balance_minor, read_model_consistent_through, authoritative, projection_slot, updated_at]
+      properties:
+        wallet_id:
+          $ref: '#/components/schemas/UUID'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        posted_balance_minor:
+          type: integer
+          format: int64
+        available_balance_minor:
+          type: integer
+          format: int64
+        read_model_consistent_through:
+          type: integer
+          format: int64
+          description: Last applied aggregate sequence version for this wallet in the active projection slot.
+        authoritative:
+          type: boolean
+          const: false
+        projection_slot:
+          type: string
+          enum: [a, b]
+        updated_at:
+          type: string
+          format: date-time
+    ReadEntry:
+      type: object
+      required: [entry_version, event_id, journal_transaction_id, entry_type, amount_minor, currency, occurred_at]
+      properties:
+        entry_version:
+          type: integer
+          format: int64
+        event_id:
+          $ref: '#/components/schemas/UUID'
+        journal_transaction_id:
+          $ref: '#/components/schemas/UUID'
+        entry_type:
+          type: string
+        amount_minor:
+          type: integer
+          format: int64
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reference:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+    ReadEntryListResponse:
+      type: object
+      required: [entries, projection_slot, authoritative]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReadEntry'
+        next_cursor:
+          type: string
+        projection_slot:
+          type: string
+          enum: [a, b]
+        authoritative:
+          type: boolean
+          const: false
+    WalletVerificationRow:
+      type: object
+      required: [tenant_id, wallet_id, currency, posted_balance_minor, as_of_version]
+      properties:
+        tenant_id:
+          $ref: '#/components/schemas/UUID'
+        wallet_id:
+          $ref: '#/components/schemas/UUID'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        posted_balance_minor:
+          type: integer
+          format: int64
+        as_of_version:
+          type: integer
+          format: int64
+    WalletVerificationPage:
+      type: object
+      required: [wallets]
+      properties:
+        wallets:
+          type: array
+          items:
+            $ref: '#/components/schemas/WalletVerificationRow'
+        next_after_tenant_id:
+          $ref: '#/components/schemas/UUID'
+        next_after_wallet_id:
+          $ref: '#/components/schemas/UUID'

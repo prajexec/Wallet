@@ -184,10 +184,9 @@ The transfer database contains references to wallet IDs and operation IDs, not w
 
 ```mermaid
 erDiagram
-    projection_versions ||--o{ aggregate_cursors : selects
-    projection_versions ||--o{ wallet_balance_view : materializes
-    projection_versions ||--o{ wallet_entry_view : materializes
-    projection_versions ||--o{ transfer_view : materializes
+    projection_versions ||--o{ wallet_balance_view : points
+    projection_versions ||--o{ wallet_entry_view : points
+    projection_rebuilds ||--o{ projection_versions : updates
     inbox_messages ||--o{ aggregate_cursors : advances
     buffered_events ||--o{ inbox_messages : awaits
     ordering_gaps ||--o{ buffered_events : detects
@@ -195,11 +194,19 @@ erDiagram
     applied_events_log ||--o{ inbox_messages : applies
 
     projection_versions {
-        uuid tenant_id PK,FK
         string projection_name PK
-        int active_version
-        int previous_version
-        bigint promoted_watermark
+        string active_slot
+        string previous_slot
+        timestamp promoted_at
+    }
+    projection_rebuilds {
+        uuid rebuild_id PK
+        string projection_name
+        string target_slot
+        string status
+        jsonb validation_report
+        timestamp started_at
+        timestamp completed_at
     }
     inbox_messages {
         uuid tenant_id PK
@@ -250,27 +257,28 @@ erDiagram
         timestamp applied_at
     }
     wallet_balance_view {
-        int projection_version PK
+        string projection_slot PK
         uuid tenant_id PK
         uuid wallet_id PK
-        bigint current_minor
-        bigint held_minor
-        bigint available_minor
-        bigint source_version
+        string currency PK
+        bigint posted_balance_minor
+        bigint available_balance_minor
+        bigint last_applied_version
+        timestamp updated_at
     }
     wallet_entry_view {
-        int projection_version PK
+        string projection_slot PK
         uuid tenant_id PK
-        uuid journal_transaction_id PK
-        uuid wallet_id
-        jsonb postings
-    }
-    transfer_view {
-        int projection_version PK
-        uuid tenant_id PK
-        uuid transfer_id PK
-        string state
+        uuid wallet_id PK
+        bigint entry_version PK
+        uuid event_id
+        uuid journal_transaction_id
+        string entry_type
         bigint amount_minor
-        bigint source_version
+        string currency
+        string reference
+        timestamp occurred_at
     }
 ```
+
+The read database is decoupled from wallet write engines and owns projections constructed solely from event payloads. Rather than executing runtime DDL, views use managed dual slots (`slot a` and `slot b`) keyed by `projection_slot`. `projection_versions` holds the globally active slot. `transfer_view` is deferred to Phase 6 when transfer saga events are introduced.

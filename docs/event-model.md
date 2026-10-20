@@ -57,6 +57,37 @@ Events are durable integration contracts. They are emitted only after the owning
 
 Payloads must include `amount_minor` and `currency` for monetary events. A monetary payload's amount is never a floating-point number. Event names describe facts, not commands.
 
+### Detailed payload schemas
+
+Because projections are constructed purely from event payloads without querying wallet databases, wallet domain event payloads contain all required read-model attributes:
+
+#### `wallet.created` (schema_version: 1)
+```json
+{
+  "wallet_id": "0192f4b7-6d92-7a4d-8cb5-1b3f9d8f3333",
+  "account_id": "0192f4b7-6d92-7a4d-8cb5-1b3f9d8f3333",
+  "currency": "USD"
+}
+```
+
+#### `wallet.deposit_posted` / `wallet.withdrawal_posted` (schema_version: 1)
+```json
+{
+  "wallet_id": "0192f4b7-6d92-7a4d-8cb5-1b3f9d8f3333",
+  "journal_transaction_id": "0192f4b7-6d92-7a4d-8cb5-1b3f9d8f7777",
+  "amount_minor": 10000,
+  "currency": "USD",
+  "side": "CREDIT",
+  "entry_type": "DEPOSIT",
+  "reference": "payroll-deposit-2026-10"
+}
+```
+
+### Schema evolution and unrecognized events
+
+- **Unknown event types:** If a consumer encounters a valid envelope with an unrecognized `event_type`, the consumer does not crash or fail. It logs a counted telemetry metric, skips view mutation, and safely advances the aggregate cursor.
+- **Unsupported schema versions:** If an event has a `schema_version` strictly greater than what the running consumer code supports, the worker never guesses or applies partial data. The event is diverted directly to `dead_letter_events` with an explicit incompatibility error, alerting operators to deploy the updated consumer binary.
+
 ## Subjects and JetStream mapping
 
 Every envelope maps to a NATS subject:
@@ -65,7 +96,9 @@ Every envelope maps to a NATS subject:
 events.<tenant_id>.<aggregate_type>.<event_type>
 ```
 
-The event ID is published as `Nats-Msg-Id`. A `WALLET_EVENTS` file-backed stream subscribes to `events.>` with a two-minute duplicate window. Subject routing is operational filtering only; the envelope's tenant, aggregate ID, and aggregate version remain the ordering contract.
+The event ID is published as `Nats-Msg-Id`. A `WALLET_EVENTS` file-backed stream subscribes to `events.>` with a two-minute duplicate window.
+
+Stream retention is explicitly configured as unlimited (`MaxAge = 0`, file storage) so that full rebuilds can replay the entire historical stream from version 1 (`DeliverAll`). The wallet database `events` table remains the ultimate immutable record of truth; in the event of stream loss, an operator tool can reset outbox publish watermarks to reconstruct the stream.
 
 ## Ordering, duplication, and gaps
 
