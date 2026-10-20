@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +57,7 @@ type Server struct {
 	dependencies Dependencies
 	store        WalletStore
 	http         *http.Server
+	internalHTTP *http.Server
 }
 
 // New constructs a wallet HTTP server. A nil logger or generator is replaced
@@ -80,15 +82,22 @@ func New(cfg config.Config, logger *slog.Logger, ids identifiers.Generator, depe
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	server.internalHTTP = &http.Server{
+		Addr:              cfg.InternalHTTPAddr,
+		Handler:           server.InternalHandler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	return server
 }
 
-// Handler returns the fully wrapped HTTP handler for tests and embedding.
+// Handler returns the fully wrapped HTTP handler for public endpoints.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz)
-	mux.HandleFunc("GET /internal/v1/stats", s.stats)
 	mux.HandleFunc("POST /v1/wallets", s.createWallet)
 	mux.HandleFunc("GET /v1/wallets/{wallet_id}", s.getWallet)
 	mux.HandleFunc("GET /v1/wallets/{wallet_id}/balance", s.getBalance)
@@ -98,15 +107,65 @@ func (s *Server) Handler() http.Handler {
 	return s.withRequestContext(mux)
 }
 
-func (s *Server) ListenAndServe() error {
-	err := s.http.ListenAndServe()
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
-	return err
+// InternalHandler returns the HTTP handler for internal management and sync endpoints,
+// guarded by X-Internal-Token authentication.
+func (s *Server) InternalHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /internal/v1/stats", s.stats)
+	return s.withRequestContext(s.requireInternalToken(mux))
 }
 
-func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
+func (s *Server) requireInternalToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("X-Internal-Token")
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.config.InternalToken)) != 1 {
+			s.writeError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", errors.New("invalid or missing internal token"), false)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) ListenAndServe() error {
+	errCh := make(chan error, 2)
+	go func() {
+		err := s.http.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("public server: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+	go func() {
+		err := s.internalHTTP.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("internal server: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	var firstErr error
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil && firstErr == nil {
+			firstErr = err
+			_ = s.http.Close()
+			_ = s.internalHTTP.Close()
+		}
+	}
+	return firstErr
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	var errs []error
+	if err := s.http.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		errs = append(errs, fmt.Errorf("public server shutdown: %w", err))
+	}
+	if err := s.internalHTTP.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		errs = append(errs, fmt.Errorf("internal server shutdown: %w", err))
+	}
+	return errors.Join(errs...)
+}
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	writeHealth(w, http.StatusOK, healthResponse{Status: "ok"})

@@ -43,18 +43,21 @@ Errors use:
 
 Commands return the durable accepted result. Transfer creation returns `202` while the saga is running; a repeated request does not start another saga.
 
-## Internal wallet endpoints
+## Internal endpoints and listener isolation
 
-These endpoints are service-to-service only and must not be exposed by a public gateway:
+All `/internal/*` routes are served exclusively on a dedicated second listener (`INTERNAL_HTTP_ADDR`, default `:8085`) and are never exposed on the public listener (`HTTP_ADDR`, default `:8080`). The public listener returns `404 Not Found` for any `/internal/*` request path.
 
-| Method and path | Purpose | Idempotency operation |
+Every request to the internal listener requires the `X-Internal-Token` HTTP header, matched against the service's configured `INTERNAL_TOKEN` using constant-time comparison. Requests with missing or invalid tokens are rejected immediately with `401 Unauthorized`. In local and production deployments, internal listener ports are never bound to external interfaces (in Docker Compose, they are published strictly to loopback on `127.0.0.1`).
+
+| Method and path | Purpose | Idempotency / auth |
 | --- | --- | --- |
-| `POST /internal/v1/wallets/{wallet_id}/reservations` | Reserve source funds for a transfer. | `transfer_id:reserve`; amount and tenant are fingerprinted. |
-| `POST /internal/v1/wallets/{wallet_id}/pending-credits` | Create destination pending credit. | `transfer_id:pending-credit`. |
-| `POST /internal/v1/wallets/{wallet_id}/captures` | Capture a confirmed reservation. | `transfer_id:capture`. |
-| `POST /internal/v1/wallets/{wallet_id}/finalizations` | Make pending credit spendable. | `transfer_id:finalize`. |
-| `POST /internal/v1/wallets/{wallet_id}/compensations` | Append a reversal for a confirmed side effect. | `transfer_id:step:compensate`. |
-| `GET /internal/v1/operations/{operation_id}` | Resolve an ambiguous operation by stable UUIDv7 operation ID. | Read-only lookup. |
+| `GET /internal/v1/stats` | Telemetry, outbox backlog, lag, gaps, and dead-letter statistics. | `X-Internal-Token`. |
+| `POST /internal/v1/wallets/{wallet_id}/reservations` | Reserve source funds for a transfer. | `X-Internal-Token`, `transfer_id:reserve`; amount and tenant fingerprinted. |
+| `POST /internal/v1/wallets/{wallet_id}/pending-credits` | Create destination pending credit. | `X-Internal-Token`, `transfer_id:pending-credit`. |
+| `POST /internal/v1/wallets/{wallet_id}/captures` | Capture a confirmed reservation. | `X-Internal-Token`, `transfer_id:capture`. |
+| `POST /internal/v1/wallets/{wallet_id}/finalizations` | Make pending credit spendable. | `X-Internal-Token`, `transfer_id:finalize`. |
+| `POST /internal/v1/wallets/{wallet_id}/compensations` | Append a reversal for a confirmed side effect. | `X-Internal-Token`, `transfer_id:step:compensate`. |
+| `GET /internal/v1/operations/{operation_id}` | Resolve an ambiguous operation by stable UUIDv7 operation ID. | `X-Internal-Token`, read-only lookup. |
 
 An internal command is accepted only when the wallet service's configured instance owns the referenced wallet. The transfer service receives facts and operation IDs, not database access. The `X-Operation-ID` header is a UUIDv7 generated once per saga step and stored in `transfer_steps.operation_id`; the string idempotency key is separately derived as `transfer_id:step`.
 

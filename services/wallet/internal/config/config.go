@@ -20,6 +20,8 @@ type Config struct {
 	ServiceName        string
 	InstanceName       string
 	HTTPAddr           string
+	InternalHTTPAddr   string
+	InternalToken      string
 	DatabaseURL        string
 	NATSURL            string
 	ShutdownTimeout    time.Duration
@@ -49,6 +51,8 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		ServiceName:        valueOr(lookup, "SERVICE_NAME", "wallet"),
 		InstanceName:       valueOr(lookup, "INSTANCE_NAME", "wallet-source"),
 		HTTPAddr:           valueOr(lookup, "HTTP_ADDR", ":8080"),
+		InternalHTTPAddr:   valueOr(lookup, "INTERNAL_HTTP_ADDR", ":8085"),
+		InternalToken:      valueOr(lookup, "INTERNAL_TOKEN", "internal-dev-token"),
 		ShutdownTimeout:    durationOr(lookup, "SHUTDOWN_TIMEOUT", 10*time.Second),
 		HealthTimeout:      durationOr(lookup, "HEALTH_TIMEOUT", 2*time.Second),
 		LogLevel:           strings.ToLower(valueOr(lookup, "LOG_LEVEL", "info")),
@@ -71,6 +75,12 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 	}
 	if strings.TrimSpace(config.HTTPAddr) == "" {
 		problems = append(problems, "HTTP_ADDR must not be empty")
+	}
+	if strings.TrimSpace(config.InternalHTTPAddr) == "" {
+		problems = append(problems, "INTERNAL_HTTP_ADDR must not be empty")
+	}
+	if strings.TrimSpace(config.InternalToken) == "" {
+		problems = append(problems, "INTERNAL_TOKEN must not be empty")
 	}
 	if err := validateURL("DATABASE_URL", config.DatabaseURL, map[string]bool{"postgres": true, "postgresql": true}); err != nil {
 		problems = append(problems, err.Error())

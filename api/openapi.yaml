@@ -18,7 +18,9 @@ tags:
   - name: Transfers
     description: Public wallet-to-wallet transfer commands and inspection.
   - name: Internal wallet
-    description: Service-to-service wallet operations; protected by a service token.
+    description: Service-to-service wallet operations; protected by X-Internal-Token on the internal listener.
+  - name: Internal management
+    description: Service telemetry and operational metrics served on the internal listener.
   - name: Health
     description: Liveness and dependency-aware readiness probes.
 paths:
@@ -225,7 +227,7 @@ paths:
       summary: Reserve source funds
       operationId: reserveWalletFunds
       security:
-        - serviceToken: []
+        - InternalTokenAuth: []
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/WalletId'
@@ -243,6 +245,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/ValidationError'
   /internal/v1/wallets/{wallet_id}/pending-credits:
@@ -251,7 +255,7 @@ paths:
       summary: Create a pending destination credit
       operationId: createPendingCredit
       security:
-        - serviceToken: []
+        - InternalTokenAuth: []
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/WalletId'
@@ -269,6 +273,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/ValidationError'
   /internal/v1/wallets/{wallet_id}/captures:
@@ -277,7 +283,7 @@ paths:
       summary: Capture a reservation
       operationId: captureWalletReservation
       security:
-        - serviceToken: []
+        - InternalTokenAuth: []
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/WalletId'
@@ -295,6 +301,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/ValidationError'
   /internal/v1/wallets/{wallet_id}/finalizations:
@@ -303,7 +311,7 @@ paths:
       summary: Finalize a pending credit
       operationId: finalizePendingCredit
       security:
-        - serviceToken: []
+        - InternalTokenAuth: []
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/WalletId'
@@ -321,6 +329,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/ValidationError'
   /internal/v1/wallets/{wallet_id}/compensations:
@@ -329,7 +339,7 @@ paths:
       summary: Append an idempotent compensation entry
       operationId: compensateWalletOperation
       security:
-        - serviceToken: []
+        - InternalTokenAuth: []
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/WalletId'
@@ -347,6 +357,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/ValidationError'
   /internal/v1/operations/{operation_id}:
@@ -355,7 +367,7 @@ paths:
       summary: Resolve an operation status
       operationId: getOperationStatus
       security:
-        - serviceToken: []
+        - InternalTokenAuth: []
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - $ref: '#/components/parameters/OperationIdPath'
@@ -366,8 +378,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /internal/v1/stats:
+    get:
+      tags: [Internal management]
+      summary: Service telemetry and operational metrics
+      operationId: getInternalStats
+      security:
+        - InternalTokenAuth: []
+      responses:
+        '200':
+          description: Operational telemetry and queue statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalStatsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /healthz:
     get:
       tags: [Health]
@@ -404,10 +434,11 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
 components:
   securitySchemes:
-    serviceToken:
-      type: http
-      scheme: bearer
-      bearerFormat: service-token
+    InternalTokenAuth:
+      type: apiKey
+      in: header
+      name: X-Internal-Token
+      description: Secret token required for internal endpoints served on the isolated internal listener (INTERNAL_HTTP_ADDR).
   parameters:
     TenantId:
       name: X-Tenant-ID
@@ -498,6 +529,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     NotFound:
       description: Resource not found in tenant scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Internal token missing or invalid
       content:
         application/json:
           schema:
@@ -720,3 +757,29 @@ components:
           type: object
           additionalProperties:
             type: string
+    InternalStatsResponse:
+      type: object
+      required: [service, unpublished_outbox_count, oldest_unpublished_age_seconds, attempts_histogram, buffered_event_count, open_gap_count, dead_letter_count]
+      properties:
+        service:
+          type: string
+        unpublished_outbox_count:
+          type: integer
+          format: int64
+        oldest_unpublished_age_seconds:
+          type: number
+          format: double
+        attempts_histogram:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+        buffered_event_count:
+          type: integer
+          format: int64
+        open_gap_count:
+          type: integer
+          format: int64
+        dead_letter_count:
+          type: integer
+          format: int64

@@ -15,9 +15,19 @@ func TestLoadFromValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid config error = %v", err)
 	}
-	if cfg.StreamName != "WALLET_EVENTS" || cfg.ConsumerName != "projector" || cfg.GapWindow <= 0 {
+	if cfg.StreamName != "WALLET_EVENTS" || cfg.ConsumerName != "projector" || cfg.HTTPAddr != ":8080" || cfg.InternalHTTPAddr != ":8085" || cfg.InternalToken != "internal-dev-token" || cfg.GapWindow <= 0 {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
+	values["INTERNAL_HTTP_ADDR"] = " "
+	if _, err := LoadFrom(lookup); err == nil || !strings.Contains(err.Error(), "INTERNAL_HTTP_ADDR must not be empty") {
+		t.Fatalf("empty internal http addr error = %v", err)
+	}
+	delete(values, "INTERNAL_HTTP_ADDR")
+	values["INTERNAL_TOKEN"] = " "
+	if _, err := LoadFrom(lookup); err == nil || !strings.Contains(err.Error(), "INTERNAL_TOKEN must not be empty") {
+		t.Fatalf("empty internal token error = %v", err)
+	}
+	delete(values, "INTERNAL_TOKEN")
 	values["HEALTH_TIMEOUT"] = "invalid"
 	if _, err := LoadFrom(lookup); err == nil || !strings.Contains(err.Error(), "HEALTH_TIMEOUT must be greater than zero") {
 		t.Fatalf("invalid timeout error = %v", err)

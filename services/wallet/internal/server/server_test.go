@@ -134,16 +134,49 @@ func TestTenantScopedWalletNotFoundReturns404(t *testing.T) {
 }
 
 func TestStatsEndpoint(t *testing.T) {
-	cfg := config.Config{HTTPAddr: ":8080", HealthTimeout: time.Second}
+	cfg := config.Config{
+		HTTPAddr:         ":8080",
+		InternalHTTPAddr: ":8085",
+		InternalToken:    "test-secret-token",
+		HealthTimeout:    time.Second,
+	}
 	server := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), identifiers.NewDeterministicGenerator(), Dependencies{}, fakeWalletStore{})
-	request := httptest.NewRequest(http.MethodGet, "/internal/v1/stats", nil)
-	recorder := httptest.NewRecorder()
-	server.Handler().ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+
+	// 1. Public listener must return 404 for /internal/*
+	publicReq := httptest.NewRequest(http.MethodGet, "/internal/v1/stats", nil)
+	publicRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(publicRec, publicReq)
+	if publicRec.Code != http.StatusNotFound {
+		t.Fatalf("public listener /internal/v1/stats status = %d, want 404; body = %s", publicRec.Code, publicRec.Body.String())
+	}
+
+	// 2. Internal listener rejects request with missing token
+	noTokenReq := httptest.NewRequest(http.MethodGet, "/internal/v1/stats", nil)
+	noTokenRec := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(noTokenRec, noTokenReq)
+	if noTokenRec.Code != http.StatusUnauthorized {
+		t.Fatalf("internal listener missing token status = %d, want 401; body = %s", noTokenRec.Code, noTokenRec.Body.String())
+	}
+
+	// 3. Internal listener rejects request with wrong token
+	wrongTokenReq := httptest.NewRequest(http.MethodGet, "/internal/v1/stats", nil)
+	wrongTokenReq.Header.Set("X-Internal-Token", "wrong-token")
+	wrongTokenRec := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(wrongTokenRec, wrongTokenReq)
+	if wrongTokenRec.Code != http.StatusUnauthorized {
+		t.Fatalf("internal listener wrong token status = %d, want 401; body = %s", wrongTokenRec.Code, wrongTokenRec.Body.String())
+	}
+
+	// 4. Internal listener accepts request with correct token
+	validReq := httptest.NewRequest(http.MethodGet, "/internal/v1/stats", nil)
+	validReq.Header.Set("X-Internal-Token", "test-secret-token")
+	validRec := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(validRec, validReq)
+	if validRec.Code != http.StatusOK {
+		t.Fatalf("internal listener valid token status = %d, want 200; body = %s", validRec.Code, validRec.Body.String())
 	}
 	var resp repository.StatsResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(validRec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal stats response: %v", err)
 	}
 	if resp.Service != "wallet" {

@@ -38,11 +38,14 @@ services:
       SERVICE_NAME: wallet
       INSTANCE_NAME: wallet-source
       HTTP_ADDR: :8080
+      INTERNAL_HTTP_ADDR: :8085
+      INTERNAL_TOKEN: internal-secret-token
       DATABASE_URL: postgres://wallet_source_role:wallet_source_dev_password@postgres:5432/wallet_source?sslmode=disable
       NATS_URL: nats://nats:4222
       LOG_LEVEL: info
     ports:
       - "8081:8080"
+      - "127.0.0.1:8181:8085"
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,11 +65,14 @@ services:
       SERVICE_NAME: wallet
       INSTANCE_NAME: wallet-destination
       HTTP_ADDR: :8080
+      INTERNAL_HTTP_ADDR: :8085
+      INTERNAL_TOKEN: internal-secret-token
       DATABASE_URL: postgres://wallet_destination_role:wallet_destination_dev_password@postgres:5432/wallet_destination?sslmode=disable
       NATS_URL: nats://nats:4222
       LOG_LEVEL: info
     ports:
       - "8082:8080"
+      - "127.0.0.1:8182:8085"
     depends_on:
       postgres:
         condition: service_healthy
@@ -110,11 +116,14 @@ services:
       SERVICE_NAME: projector
       INSTANCE_NAME: projector
       HTTP_ADDR: :8080
+      INTERNAL_HTTP_ADDR: :8085
+      INTERNAL_TOKEN: internal-secret-token
       DATABASE_URL: postgres://projector_role:projector_dev_password@postgres:5432/read?sslmode=disable
       NATS_URL: nats://nats:4222
       LOG_LEVEL: info
     ports:
       - "8084:8080"
+      - "127.0.0.1:8184:8085"
     depends_on:
       postgres:
         condition: service_healthy

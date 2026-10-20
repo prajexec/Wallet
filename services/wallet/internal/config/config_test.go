@@ -34,6 +34,8 @@ func TestLoadFrom(t *testing.T) {
 		{name: "bad outbox publish timeout", mutate: func(values map[string]string) { values["OUTBOX_PUBLISH_TIMEOUT"] = "nope" }, wantErr: "OUTBOX_PUBLISH_TIMEOUT must be greater than zero"},
 		{name: "lease shorter than publish timeout", mutate: func(values map[string]string) { values["OUTBOX_LEASE"] = "1s" }, wantErr: "OUTBOX_LEASE must be greater than"},
 		{name: "bad log level", mutate: func(values map[string]string) { values["LOG_LEVEL"] = "trace" }, wantErr: "LOG_LEVEL must be one of"},
+		{name: "empty internal http addr", mutate: func(values map[string]string) { values["INTERNAL_HTTP_ADDR"] = " " }, wantErr: "INTERNAL_HTTP_ADDR must not be empty"},
+		{name: "empty internal token", mutate: func(values map[string]string) { values["INTERNAL_TOKEN"] = " " }, wantErr: "INTERNAL_TOKEN must not be empty"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -46,7 +48,7 @@ func TestLoadFrom(t *testing.T) {
 				if err != nil {
 					t.Fatalf("LoadFrom() error = %v", err)
 				}
-				if got.ServiceName != "wallet" || got.InstanceName != "wallet-source" || got.HealthTimeout != 2*time.Second || got.OutboxBatchSize != 50 || got.OutboxPollInterval != 250*time.Millisecond || got.OutboxLease != 5*time.Second || got.OutboxPublish != 2*time.Second {
+				if got.ServiceName != "wallet" || got.InstanceName != "wallet-source" || got.HTTPAddr != ":8080" || got.InternalHTTPAddr != ":8085" || got.InternalToken != "internal-dev-token" || got.HealthTimeout != 2*time.Second || got.OutboxBatchSize != 50 || got.OutboxPollInterval != 250*time.Millisecond || got.OutboxLease != 5*time.Second || got.OutboxPublish != 2*time.Second {
 					t.Fatalf("unexpected defaults: %+v", got)
 				}
 				return

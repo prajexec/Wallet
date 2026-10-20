@@ -126,7 +126,9 @@ The stream contract is:
 | `MaxDeliver` | `5` | Poison-event bound before dead-letter recording. |
 | `MaxAckPending` | `100` | Bounded projector in-flight work. |
 
-The internal stats endpoint is `GET /internal/v1/stats` on wallet and projector services. It reports unpublished outbox count, oldest unpublished age, attempts histogram, buffered-event count, open gaps, and dead-letter count. It is operationally protected by the local service boundary; Prometheus is deferred to Phase 8.
+The internal stats endpoint is `GET /internal/v1/stats` on wallet and projector services. It reports unpublished outbox count, oldest unpublished age, attempts histogram, buffered-event count, open gaps, and dead-letter count.
+
+All `/internal/*` routes are isolated on a dedicated secondary HTTP listener (`INTERNAL_HTTP_ADDR`, default `:8085`), separate from the public traffic listener (`HTTP_ADDR`, default `:8080`). The public listener returns `404 Not Found` for any `/internal/*` request. Access to the internal listener requires an `X-Internal-Token` header, validated using constant-time comparison (`crypto/subtle.ConstantTimeCompare`) against the configured `INTERNAL_TOKEN`; invalid or omitted tokens return `401 Unauthorized`. In Docker Compose, internal ports are published strictly on loopback interfaces (`127.0.0.1:8181:8085` for wallet-source, `127.0.0.1:8182:8085` for wallet-destination, `127.0.0.1:8184:8085` for projector). Prometheus is deferred to Phase 8.
 
 ## Planned CLIs
 
