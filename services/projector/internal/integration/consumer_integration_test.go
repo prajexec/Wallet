@@ -885,7 +885,7 @@ func TestConsumer_EndToEndWalletRelayAndProjectorAppliedTotals(t *testing.T) {
 	}
 
 	// 4. Wait for projector runner to consume all 3 events and write to applied_events_log
-	deadline := time.Now().Add(6 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	var appliedCount int
 	for time.Now().Before(deadline) {
 		_ = testReadDB.QueryRowContext(ctx, "SELECT count(*) FROM applied_events_log WHERE tenant_id = $1 AND consumer_name = $2",

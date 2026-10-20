@@ -312,7 +312,15 @@ ON CONFLICT (tenant_id, consumer_name, event_id) DO NOTHING;
 		return tx.Commit()
 	}
 
-	// 2. Read the aggregate cursor with FOR UPDATE to serialize aggregate processing.
+	// 2. Serialize aggregate processing across concurrent runners/processes.
+	const lockAggregate = `
+SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text || ':' || $2::text || ':' || $3::uuid::text, 0));
+`
+	if _, err := tx.ExecContext(ctx, lockAggregate, envelope.TenantID, r.config.ConsumerName, envelope.AggregateID); err != nil {
+		return fmt.Errorf("lock aggregate: %w", err)
+	}
+
+	// 3. Read the aggregate cursor with FOR UPDATE to serialize aggregate processing.
 	const selectCursor = `
 SELECT last_version
 FROM aggregate_cursors
