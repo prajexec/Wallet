@@ -22,3 +22,7 @@ Put the pure decision function and event subject/envelope mapping in `shared`, w
 - **In-memory reorder buffer:** rejected because an ACKed message could be lost on process restart.
 - **Shared consumer storage package:** rejected because the projector owns read-database schema and migration boundaries.
 - **NATS ordering as correctness:** rejected because delivery order is not the aggregate-version contract.
+
+## Addendum (2026-10-20)
+
+See [ADR 019](019-consumer-aggregate-advisory-locking.md) for aggregate-level advisory locking (`pg_advisory_xact_lock`) required to serialize concurrent consumer deliveries for brand-new aggregates prior to cursor creation.
