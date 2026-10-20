@@ -78,6 +78,10 @@ type RunnerConfig struct {
 	// beforeAck is intentionally unexported. Tests use it to simulate consumer
 	// crashes after the database transaction has committed but before msg.Ack().
 	beforeAck func(events.Envelope) error
+
+	// afterCursorRead is intentionally unexported. Tests use it to interleave
+	// concurrent deliveries after cursor has been read but before commit.
+	afterCursorRead func(context.Context, events.Envelope) error
 }
 
 func (c RunnerConfig) withDefaults() RunnerConfig {
@@ -145,6 +149,13 @@ func NewRunner(db *sql.DB, fetcher MessageFetcher, handler Handler, config Runne
 // NewRunnerForTesting constructs a runner with an unexported test failpoint hook.
 // It is intended for integration test suites and cannot be injected via production NewRunner.
 func NewRunnerForTesting(db *sql.DB, fetcher MessageFetcher, handler Handler, config RunnerConfig, beforeAck func(events.Envelope) error) *Runner {
+	config.beforeAck = beforeAck
+	return NewRunner(db, fetcher, handler, config)
+}
+
+// NewRunnerWithHooks constructs a runner with test failpoint hooks for testing.
+func NewRunnerWithHooks(db *sql.DB, fetcher MessageFetcher, handler Handler, config RunnerConfig, afterCursorRead func(context.Context, events.Envelope) error, beforeAck func(events.Envelope) error) *Runner {
+	config.afterCursorRead = afterCursorRead
 	config.beforeAck = beforeAck
 	return NewRunner(db, fetcher, handler, config)
 }
@@ -358,6 +369,12 @@ ORDER BY aggregate_version ASC;
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("buffered versions rows error: %w", err)
+	}
+
+	if r.config.afterCursorRead != nil {
+		if hookErr := r.config.afterCursorRead(ctx, envelope); hookErr != nil {
+			return hookErr
+		}
 	}
 
 	// 3. Apply pure ordering decision.

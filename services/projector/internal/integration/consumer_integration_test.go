@@ -802,6 +802,135 @@ func TestConsumer_DuplicateDeliveryYieldsExactAppliedCount(t *testing.T) {
 	}
 }
 
+// Regression test for first-event race fixed in 3f6278f:
+// Two concurrent deliveries for a brand-new aggregate (both carrying the same tenant_id
+// and aggregate_id; one with version 1, one with version 2) must never leave an in-order
+// event buffered.
+func TestConsumer_ConcurrentDeliveriesBrandNewAggregate_NeverBuffersInOrder(t *testing.T) {
+	if testReadDB == nil {
+		t.Skip("read test database not configured")
+	}
+	nc, js := getNATSConnection(t)
+	defer nc.Close()
+
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
+	ids := identifiers.NewGenerator()
+	tenantID, _ := ids.Generate()
+	t.Cleanup(func() { cleanTenantReadData(t, tenantID) })
+	aggregateID, _ := ids.Generate()
+	randID, _ := ids.Generate()
+	consumerName := "first_race_" + randID.String()
+	t.Cleanup(func() { _ = js.DeleteConsumer(stream, consumerName) })
+
+	filterSubject := prefix + "." + tenantID.String() + ".>"
+	cfg := consumer.DefaultConsumerConfigWithPrefix(stream, consumerName, prefix)
+	cfg.FilterSubject = filterSubject
+	cfg.MaxDeliver = 5
+	if _, err := js.AddConsumer(stream, &cfg); err != nil {
+		t.Fatalf("add consumer: %v", err)
+	}
+
+	sub1, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
+	if err != nil {
+		t.Fatalf("pull subscribe 1: %v", err)
+	}
+	sub2, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
+	if err != nil {
+		t.Fatalf("pull subscribe 2: %v", err)
+	}
+
+	env1 := makeEnvelope(t, tenantID, aggregateID, 1)
+	env2 := makeEnvelope(t, tenantID, aggregateID, 2)
+
+	// Runner 1 will process version 1. Its failpoint hook (afterCursorRead) triggers
+	// when version 1 has acquired/checked the cursor (cursor = 0) but before committing.
+	// In the failpoint, we publish version 2 and allow Runner 2 to fetch and process it concurrently.
+	var hookTriggered atomic.Bool
+	deliveryBStarted := make(chan struct{}, 1)
+
+	runner1 := consumer.NewRunnerWithHooks(testReadDB, sub1, nil, consumer.RunnerConfig{
+		StreamName:   stream,
+		ConsumerName: consumerName,
+		BatchSize:    1,
+		FetchTimeout: 200 * time.Millisecond,
+	}, func(ctx context.Context, env events.Envelope) error {
+		if env.AggregateVersion == 1 {
+			hookTriggered.Store(true)
+			// Publish version 2 to JetStream now so Runner 2 picks it up while Runner 1 is inside its transaction!
+			publishEnvelope(t, js, env2)
+			// Signal that delivery B can proceed
+			select {
+			case deliveryBStarted <- struct{}{}:
+			default:
+			}
+			// Hold the transaction open for a brief period to force Delivery B to interleave
+			time.Sleep(500 * time.Millisecond)
+		}
+		return nil
+	}, nil)
+
+	runner2 := consumer.NewRunner(testReadDB, sub2, nil, consumer.RunnerConfig{
+		StreamName:   stream,
+		ConsumerName: consumerName,
+		BatchSize:    1,
+		FetchTimeout: 200 * time.Millisecond,
+	})
+
+	r1Ctx, r1Cancel := context.WithCancel(context.Background())
+	defer r1Cancel()
+	r2Ctx, r2Cancel := context.WithCancel(context.Background())
+	defer r2Cancel()
+
+	// 1. Publish version 1
+	publishEnvelope(t, js, env1)
+
+	// 2. Start Runner 1 only, ensuring Runner 1 fetches version 1
+	go func() { _ = runner1.Run(r1Ctx) }()
+
+	// 3. Wait for Runner 1 to read cursor=0 and enter afterCursorRead failpoint
+	select {
+	case <-deliveryBStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("failpoint hook was never triggered for delivery A")
+	}
+
+	// 4. Start Runner 2 to concurrently process version 2 while Runner 1 is still in transaction
+	go func() { _ = runner2.Run(r2Ctx) }()
+
+	// Wait for both deliveries to finish processing
+	ctx := context.Background()
+	deadline := time.Now().Add(6 * time.Second)
+	var cursor int64
+	for time.Now().Before(deadline) {
+		_ = testReadDB.QueryRowContext(ctx, "SELECT last_version FROM aggregate_cursors WHERE tenant_id = $1 AND consumer_name = $2 AND aggregate_id = $3",
+			tenantID, consumerName, aggregateID).Scan(&cursor)
+		if cursor == 2 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Verify the invariant: cursor must advance to 2, and buffered events must be 0!
+	if cursor != 2 {
+		t.Fatalf("cursor = %d, want 2 (in-order events must not be blocked)", cursor)
+	}
+
+	var bufCount int
+	err = testReadDB.QueryRowContext(ctx, "SELECT count(*) FROM buffered_events WHERE tenant_id = $1 AND consumer_name = $2 AND aggregate_id = $3",
+		tenantID, consumerName, aggregateID).Scan(&bufCount)
+	if err != nil || bufCount != 0 {
+		t.Fatalf("buffered count = %d, want 0 (concurrent delivery must never leave in-order event buffered)", bufCount)
+	}
+
+	var appliedCount int
+	err = testReadDB.QueryRowContext(ctx, "SELECT count(*) FROM applied_events_log WHERE tenant_id = $1 AND consumer_name = $2 AND aggregate_id = $3",
+		tenantID, consumerName, aggregateID).Scan(&appliedCount)
+	if err != nil || appliedCount != 2 {
+		t.Fatalf("applied count = %d, want 2", appliedCount)
+	}
+}
+
 // Scenario 10: Run the end-to-end wallet flow with relays and projector enabled;
 // compare journal event totals with applied-event totals.
 func TestConsumer_EndToEndWalletRelayAndProjectorAppliedTotals(t *testing.T) {
