@@ -271,9 +271,11 @@ erDiagram
         uuid tenant_id PK
         uuid wallet_id PK
         bigint entry_version PK
+        bigint aggregate_version
         uuid event_id
         uuid journal_transaction_id
         string entry_type
+        string side
         bigint amount_minor
         string currency
         string reference

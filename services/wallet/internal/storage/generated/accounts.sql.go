@@ -59,7 +59,12 @@ type GetAccountBalanceWithVersionRow struct {
 }
 
 func (q *Queries) GetAccountBalanceWithVersion(ctx context.Context, arg GetAccountBalanceWithVersionParams) (GetAccountBalanceWithVersionRow, error) {
-	row := q.db.QueryRow(ctx, getAccountBalanceWithVersion, arg.TenantID, arg.AccountID, arg.AggregateID, arg.Currency)
+	row := q.db.QueryRow(ctx, getAccountBalanceWithVersion,
+		arg.TenantID,
+		arg.AccountID,
+		arg.AggregateID,
+		arg.Currency,
+	)
 	var i GetAccountBalanceWithVersionRow
 	err := row.Scan(&i.PostedBalanceMinor, &i.AsOfVersion)
 	return i, err

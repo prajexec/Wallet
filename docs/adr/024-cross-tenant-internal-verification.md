@@ -44,7 +44,7 @@ Chosen Solution: **Cross-Tenant Keyset-Paginated Verification Endpoint on Intern
      - Equal versions **must** have identical posted balances;
      - If candidate projection is behind, the verifier retries until caught up or timeout;
      - Verifies `wallet_balance_view.posted_balance_minor == SUM(wallet_entry_view.amount_minor)`;
-     - Verifies `wallet_entry_view.entry_version` runs contiguously from 1 to `last_applied_version`;
+    - Verifies `wallet_entry_view.entry_version` runs contiguously from 1 to the number of journal-entry events applied for the wallet; `last_applied_version` is the aggregate-event watermark and can include `wallet.created` or counted no-op events;
      - Verifies candidate slot matches active slot where versions match;
      - Verifies no authoritative wallet is missing from the projection.
 

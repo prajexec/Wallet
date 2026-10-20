@@ -18,7 +18,7 @@ Rather than executing runtime DDL (`CREATE TABLE ..._vN`) during deployments or 
 | View | Primary key | Contents | Consistency contract |
 | --- | --- | --- | --- |
 | `wallet_balance_view` | `(projection_slot, tenant_id, wallet_id, currency)` | Posted and available USD minor units, last applied aggregate version, update timestamp. | Reports `read_model_consistent_through` (aggregate version). |
-| `wallet_entry_view` | `(projection_slot, tenant_id, wallet_id, entry_version)` | Ordered transaction history, event ID, journal transaction ID, entry type, amount, currency, reference, occurred_at. | Replays from journal events; entry versions run contiguously from 1. |
+| `wallet_entry_view` | `(projection_slot, tenant_id, wallet_id, entry_version)` | Ordered journal transaction history, event ID, journal transaction ID, entry type, side, amount, currency, reference, occurred_at. | Replays from event payloads; `entry_version` is a projection-local journal-entry ordinal and runs contiguously from 1. |
 
 Every view row contains `projection_slot` (`a` or `b`). The read database table `projection_versions` maintains the currently active slot (`active_slot`) and previous slot (`previous_slot`) for each projection name (e.g. `wallet_balances`).
 
@@ -105,7 +105,7 @@ Verification is full and exhaustive across all tenants (no sampling):
    - If candidate projection is behind, the verifier retries until caught up or timeout expires.
 3. **Invariant checks**:
    - Projected `posted_balance_minor` strictly equals the `SUM(amount_minor)` of all entries in `wallet_entry_view`.
-   - Entry versions in `wallet_entry_view` run contiguously from 1 to `last_applied_version` without gaps.
+    - Entry versions in `wallet_entry_view` run contiguously from 1 to the number of journal-entry events applied for that wallet; `last_applied_version` remains the aggregate-event watermark and may be greater because `wallet.created` and unknown event types do not create entries.
    - Candidate slot matches the active slot for all wallets where versions are equal.
    - No wallet present in the authoritative source is missing from the candidate projection.
 

@@ -39,7 +39,7 @@ sqlc:
 	$(SQLC) generate -f ./sqlc.yaml
 
 sqlc-check: sqlc
-	@git diff --exit-code -- sqlc.yaml migrations/wallet services/wallet/internal/storage/generated services/wallet/internal/storage/queries
+	@git diff --exit-code -- sqlc.yaml migrations/wallet migrations/projector services/wallet/internal/storage/generated services/wallet/internal/storage/queries services/projector/internal/storage/generated services/projector/internal/storage/queries
 
 lint:
 	@test -z "$$(gofmt -l $$(git ls-files '*.go'))" || (printf 'gofmt required for:\n%s\n' "$$(gofmt -l $$(git ls-files '*.go'))"; exit 1)
