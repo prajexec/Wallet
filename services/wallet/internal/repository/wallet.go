@@ -34,6 +34,9 @@ type journalPostedData struct {
 	JournalTransactionID identifiers.UUID `json:"journal_transaction_id"`
 	AmountMinor          int64            `json:"amount_minor"`
 	Currency             money.Currency   `json:"currency"`
+	Side                 string           `json:"side"`
+	EntryType            string           `json:"entry_type"`
+	Reference            string           `json:"reference"`
 }
 
 func (r *Repository) CreateWallet(ctx context.Context, tenantID identifiers.UUID, key, requestHash, externalReference string) (CommandResult, error) {
@@ -66,11 +69,11 @@ func (r *Repository) CreateWallet(ctx context.Context, tenantID identifiers.UUID
 		if _, err := q.InsertWallet(ctx, walletdb.InsertWalletParams{TenantID: tenantID, ID: walletID, AccountID: walletID, Status: "ACTIVE", CreatedAt: now}); err != nil {
 			return err
 		}
-		eventID, err := r.appendEvent(ctx, q, tenantID, walletID, "wallet.created", walletCreatedData{WalletID: walletID, AccountID: walletID, Currency: money.USD}, now)
+		eventID, nextVersion, err := r.appendEvent(ctx, q, tenantID, walletID, "wallet.created", walletCreatedData{WalletID: walletID, AccountID: walletID, Currency: money.USD}, now)
 		if err != nil {
 			return err
 		}
-		body, err := json.Marshal(Wallet{TenantID: tenantID, WalletID: walletID, AccountID: walletID, Currency: money.USD, Status: "ACTIVE", CreatedAt: now})
+		body, err := json.Marshal(Wallet{TenantID: tenantID, WalletID: walletID, AccountID: walletID, Currency: money.USD, Status: "ACTIVE", CreatedAt: now, AggregateVersion: nextVersion})
 		if err != nil {
 			return err
 		}
@@ -180,14 +183,33 @@ func (r *Repository) postMoney(ctx context.Context, tenantID, walletID identifie
 			}
 		}
 		eventType := "wallet.deposit_posted"
+		side := "CREDIT"
+		entryType := "DEPOSIT"
 		if withdrawal {
 			eventType = "wallet.withdrawal_posted"
+			side = "DEBIT"
+			entryType = "WITHDRAWAL"
 		}
-		eventID, err := r.appendEvent(ctx, q, tenantID, walletID, eventType, journalPostedData{WalletID: walletID, JournalTransactionID: transactionID, AmountMinor: amountMinor, Currency: money.USD}, now)
+		eventID, nextVersion, err := r.appendEvent(ctx, q, tenantID, walletID, eventType, journalPostedData{
+			WalletID:             walletID,
+			JournalTransactionID: transactionID,
+			AmountMinor:          amountMinor,
+			Currency:             money.USD,
+			Side:                 side,
+			EntryType:            entryType,
+			Reference:            reference,
+		}, now)
 		if err != nil {
 			return err
 		}
-		body, err := json.Marshal(JournalCommandResponse{OperationID: eventID, JournalTransactionID: transactionID, EventID: eventID, AmountMinor: amountMinor, Currency: money.USD})
+		body, err := json.Marshal(JournalCommandResponse{
+			OperationID:          eventID,
+			JournalTransactionID: transactionID,
+			EventID:              eventID,
+			AmountMinor:          amountMinor,
+			Currency:             money.USD,
+			AggregateVersion:     nextVersion,
+		})
 		if err != nil {
 			return err
 		}
@@ -212,7 +234,15 @@ func (r *Repository) GetWallet(ctx context.Context, tenantID, walletID identifie
 	if err != nil {
 		return Wallet{}, err
 	}
-	return Wallet{TenantID: row.TenantID, WalletID: row.ID, AccountID: row.AccountID, Currency: money.Currency(currencyUSD), Status: row.Status, CreatedAt: row.CreatedAt}, nil
+	return Wallet{
+		TenantID:         row.TenantID,
+		WalletID:         row.ID,
+		AccountID:        row.AccountID,
+		Currency:         money.Currency(currencyUSD),
+		Status:           row.Status,
+		CreatedAt:        row.CreatedAt,
+		AggregateVersion: row.AggregateVersion,
+	}, nil
 }
 
 func (r *Repository) GetBalance(ctx context.Context, tenantID, walletID identifiers.UUID) (BalanceResponse, error) {
@@ -220,11 +250,21 @@ func (r *Repository) GetBalance(ctx context.Context, tenantID, walletID identifi
 	if err != nil {
 		return BalanceResponse{}, err
 	}
-	posted, err := walletdb.New(r.pool).GetAccountBalance(ctx, walletdb.GetAccountBalanceParams{TenantID: tenantID, AccountID: wallet.AccountID, Currency: currencyUSD})
+	bal, err := walletdb.New(r.pool).GetAccountBalanceWithVersion(ctx, walletdb.GetAccountBalanceWithVersionParams{
+		TenantID:    tenantID,
+		AccountID:   wallet.AccountID,
+		AggregateID: wallet.WalletID,
+		Currency:    currencyUSD,
+	})
 	if err != nil {
 		return BalanceResponse{}, err
 	}
-	return BalanceResponse{WalletID: walletID, Balance: Balance{Currency: money.USD, CurrentMinor: posted, HeldMinor: 0, AvailableMinor: posted}, Authoritative: true}, nil
+	return BalanceResponse{
+		WalletID:      walletID,
+		Balance:       Balance{Currency: money.USD, CurrentMinor: bal.PostedBalanceMinor, HeldMinor: 0, AvailableMinor: bal.PostedBalanceMinor},
+		Authoritative: true,
+		AsOfVersion:   bal.AsOfVersion,
+	}, nil
 }
 
 type cursor struct {

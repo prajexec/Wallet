@@ -33,6 +33,38 @@ func (q *Queries) GetAccountBalance(ctx context.Context, arg GetAccountBalancePa
 	return posted_balance_minor, err
 }
 
+const getAccountBalanceWithVersion = `-- name: GetAccountBalanceWithVersion :one
+SELECT COALESCE(
+    SUM(CASE WHEN side = 'CREDIT' THEN amount_minor ELSE -amount_minor END), 0
+)::bigint AS posted_balance_minor,
+(
+    SELECT COALESCE(MAX(e.aggregate_version), 1)::bigint
+    FROM events AS e
+    WHERE e.tenant_id = $1 AND e.aggregate_id = $3
+) AS as_of_version
+FROM journal_postings
+WHERE tenant_id = $1 AND account_id = $2 AND currency = $4
+`
+
+type GetAccountBalanceWithVersionParams struct {
+	TenantID    identifiers.UUID `db:"tenant_id"`
+	AccountID   identifiers.UUID `db:"account_id"`
+	AggregateID identifiers.UUID `db:"aggregate_id"`
+	Currency    string           `db:"currency"`
+}
+
+type GetAccountBalanceWithVersionRow struct {
+	PostedBalanceMinor int64 `db:"posted_balance_minor"`
+	AsOfVersion        int64 `db:"as_of_version"`
+}
+
+func (q *Queries) GetAccountBalanceWithVersion(ctx context.Context, arg GetAccountBalanceWithVersionParams) (GetAccountBalanceWithVersionRow, error) {
+	row := q.db.QueryRow(ctx, getAccountBalanceWithVersion, arg.TenantID, arg.AccountID, arg.AggregateID, arg.Currency)
+	var i GetAccountBalanceWithVersionRow
+	err := row.Scan(&i.PostedBalanceMinor, &i.AsOfVersion)
+	return i, err
+}
+
 const getAccountByName = `-- name: GetAccountByName :one
 SELECT tenant_id, id, kind, name, currency, created_at
 FROM accounts

@@ -17,3 +17,15 @@ SELECT COALESCE(
 )::bigint AS posted_balance_minor
 FROM journal_postings
 WHERE tenant_id = $1 AND account_id = $2 AND currency = $3;
+
+-- name: GetAccountBalanceWithVersion :one
+SELECT COALESCE(
+    SUM(CASE WHEN side = 'CREDIT' THEN amount_minor ELSE -amount_minor END), 0
+)::bigint AS posted_balance_minor,
+(
+    SELECT COALESCE(MAX(e.aggregate_version), 1)::bigint
+    FROM events AS e
+    WHERE e.tenant_id = $1 AND e.aggregate_id = $3
+) AS as_of_version
+FROM journal_postings
+WHERE tenant_id = $1 AND account_id = $2 AND currency = $4;

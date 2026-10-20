@@ -13,10 +13,11 @@ type Querier interface {
 	AcquireWalletLock(ctx context.Context, arg AcquireWalletLockParams) error
 	ClaimOutboxMessages(ctx context.Context, arg ClaimOutboxMessagesParams) ([]ClaimOutboxMessagesRow, error)
 	GetAccountBalance(ctx context.Context, arg GetAccountBalanceParams) (int64, error)
+	GetAccountBalanceWithVersion(ctx context.Context, arg GetAccountBalanceWithVersionParams) (GetAccountBalanceWithVersionRow, error)
 	GetAccountByName(ctx context.Context, arg GetAccountByNameParams) (Account, error)
 	GetIdempotencyRecord(ctx context.Context, arg GetIdempotencyRecordParams) (IdempotencyRecord, error)
 	GetNextAggregateVersion(ctx context.Context, arg GetNextAggregateVersionParams) (int64, error)
-	GetWallet(ctx context.Context, arg GetWalletParams) (Wallet, error)
+	GetWallet(ctx context.Context, arg GetWalletParams) (GetWalletRow, error)
 	GetWalletForRead(ctx context.Context, arg GetWalletForReadParams) (Wallet, error)
 	InsertAccount(ctx context.Context, arg InsertAccountParams) error
 	InsertEvent(ctx context.Context, arg InsertEventParams) (Event, error)
@@ -28,6 +29,7 @@ type Querier interface {
 	ListPostingsForAccount(ctx context.Context, arg ListPostingsForAccountParams) ([]JournalPosting, error)
 	ListWalletEntries(ctx context.Context, arg ListWalletEntriesParams) ([]ListWalletEntriesRow, error)
 	ListWalletEntriesBefore(ctx context.Context, arg ListWalletEntriesBeforeParams) ([]ListWalletEntriesBeforeRow, error)
+	ListWalletVerificationRows(ctx context.Context, arg ListWalletVerificationRowsParams) ([]ListWalletVerificationRowsRow, error)
 	MarkOutboxFailed(ctx context.Context, arg MarkOutboxFailedParams) (int64, error)
 	MarkOutboxPublished(ctx context.Context, arg MarkOutboxPublishedParams) (int64, error)
 }

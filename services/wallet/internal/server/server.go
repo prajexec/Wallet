@@ -47,6 +47,7 @@ type WalletStore interface {
 	Deposit(context.Context, identifiers.UUID, identifiers.UUID, string, string, int64, string) (repository.CommandResult, error)
 	Withdraw(context.Context, identifiers.UUID, identifiers.UUID, string, string, int64, string) (repository.CommandResult, error)
 	GetStats(context.Context) (repository.StatsResponse, error)
+	VerifyWallets(context.Context, identifiers.UUID, identifiers.UUID, int32) (repository.WalletVerificationPage, error)
 }
 
 // Server owns the HTTP lifecycle and wallet endpoints for one wallet instance.
@@ -112,6 +113,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) InternalHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /internal/v1/stats", s.stats)
+	mux.HandleFunc("GET /internal/v1/wallets/verify", s.verifyWallets)
 	return s.withRequestContext(s.requireInternalToken(mux))
 }
 
@@ -442,6 +444,51 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) verifyWallets(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		s.unavailable(w, r)
+		return
+	}
+	var afterTenantID identifiers.UUID
+	var afterWalletID identifiers.UUID
+	if val := r.URL.Query().Get("after_tenant_id"); strings.TrimSpace(val) != "" {
+		id, err := identifiers.ParseUUID(val)
+		if err != nil {
+			s.writeError(w, r, http.StatusUnprocessableEntity, apierrors.CodeValidation, fmt.Errorf("invalid after_tenant_id: %w", err), false)
+			return
+		}
+		afterTenantID = id
+	}
+	if val := r.URL.Query().Get("after_wallet_id"); strings.TrimSpace(val) != "" {
+		id, err := identifiers.ParseUUID(val)
+		if err != nil {
+			s.writeError(w, r, http.StatusUnprocessableEntity, apierrors.CodeValidation, fmt.Errorf("invalid after_wallet_id: %w", err), false)
+			return
+		}
+		afterWalletID = id
+	}
+	if (afterTenantID.IsZero()) != (afterWalletID.IsZero()) {
+		s.writeError(w, r, http.StatusUnprocessableEntity, apierrors.CodeValidation, errors.New("after_tenant_id and after_wallet_id must be provided together"), false)
+		return
+	}
+	limit := int32(100)
+	if val := r.URL.Query().Get("limit"); strings.TrimSpace(val) != "" {
+		parsed, err := strconv.ParseInt(val, 10, 32)
+		if err != nil || parsed < 1 || parsed > 500 {
+			s.writeError(w, r, http.StatusUnprocessableEntity, apierrors.CodeValidation, errors.New("limit must be between 1 and 500"), false)
+			return
+		}
+		limit = int32(parsed)
+	}
+
+	page, err := s.store.VerifyWallets(r.Context(), afterTenantID, afterWalletID, limit)
+	if err != nil {
+		s.handleStoreError(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, page)
 }
 
 func (s *Server) writeCommandResult(w http.ResponseWriter, result repository.CommandResult) {

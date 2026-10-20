@@ -26,9 +26,19 @@ func (q *Queries) AcquireWalletLock(ctx context.Context, arg AcquireWalletLockPa
 }
 
 const getWallet = `-- name: GetWallet :one
-SELECT tenant_id, id, account_id, status, created_at
-FROM wallets
-WHERE tenant_id = $1 AND id = $2
+SELECT
+    w.tenant_id,
+    w.id,
+    w.account_id,
+    w.status,
+    w.created_at,
+    (
+        SELECT COALESCE(MAX(e.aggregate_version), 1)::bigint
+        FROM events AS e
+        WHERE e.tenant_id = w.tenant_id AND e.aggregate_id = w.id
+    ) AS aggregate_version
+FROM wallets AS w
+WHERE w.tenant_id = $1 AND w.id = $2
 `
 
 type GetWalletParams struct {
@@ -36,15 +46,25 @@ type GetWalletParams struct {
 	ID       identifiers.UUID `db:"id"`
 }
 
-func (q *Queries) GetWallet(ctx context.Context, arg GetWalletParams) (Wallet, error) {
+type GetWalletRow struct {
+	TenantID         identifiers.UUID `db:"tenant_id"`
+	ID               identifiers.UUID `db:"id"`
+	AccountID        identifiers.UUID `db:"account_id"`
+	Status           string           `db:"status"`
+	CreatedAt        time.Time        `db:"created_at"`
+	AggregateVersion int64            `db:"aggregate_version"`
+}
+
+func (q *Queries) GetWallet(ctx context.Context, arg GetWalletParams) (GetWalletRow, error) {
 	row := q.db.QueryRow(ctx, getWallet, arg.TenantID, arg.ID)
-	var i Wallet
+	var i GetWalletRow
 	err := row.Scan(
 		&i.TenantID,
 		&i.ID,
 		&i.AccountID,
 		&i.Status,
 		&i.CreatedAt,
+		&i.AggregateVersion,
 	)
 	return i, err
 }
@@ -107,4 +127,66 @@ func (q *Queries) InsertWallet(ctx context.Context, arg InsertWalletParams) (Wal
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listWalletVerificationRows = `-- name: ListWalletVerificationRows :many
+SELECT
+    w.tenant_id,
+    w.id AS wallet_id,
+    a.currency,
+    COALESCE((
+        SELECT SUM(CASE WHEN jp.side = 'CREDIT' THEN jp.amount_minor ELSE -jp.amount_minor END)
+        FROM journal_postings AS jp
+        WHERE jp.tenant_id = w.tenant_id AND jp.account_id = w.account_id AND jp.currency = a.currency
+    ), 0)::bigint AS posted_balance_minor,
+    COALESCE((
+        SELECT MAX(e.aggregate_version)
+        FROM events AS e
+        WHERE e.tenant_id = w.tenant_id AND e.aggregate_id = w.id
+    ), 1)::bigint AS as_of_version
+FROM wallets AS w
+JOIN accounts AS a ON a.tenant_id = w.tenant_id AND a.id = w.account_id
+WHERE ($1::uuid = '00000000-0000-0000-0000-000000000000'::uuid OR (w.tenant_id, w.id) > ($1::uuid, $2::uuid))
+ORDER BY w.tenant_id ASC, w.id ASC
+LIMIT $3
+`
+
+type ListWalletVerificationRowsParams struct {
+	Column1 identifiers.UUID `db:"column_1"`
+	Column2 identifiers.UUID `db:"column_2"`
+	Limit   int32            `db:"limit"`
+}
+
+type ListWalletVerificationRowsRow struct {
+	TenantID           identifiers.UUID `db:"tenant_id"`
+	WalletID           identifiers.UUID `db:"wallet_id"`
+	Currency           string           `db:"currency"`
+	PostedBalanceMinor int64            `db:"posted_balance_minor"`
+	AsOfVersion        int64            `db:"as_of_version"`
+}
+
+func (q *Queries) ListWalletVerificationRows(ctx context.Context, arg ListWalletVerificationRowsParams) ([]ListWalletVerificationRowsRow, error) {
+	rows, err := q.db.Query(ctx, listWalletVerificationRows, arg.Column1, arg.Column2, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWalletVerificationRowsRow
+	for rows.Next() {
+		var i ListWalletVerificationRowsRow
+		if err := rows.Scan(
+			&i.TenantID,
+			&i.WalletID,
+			&i.Currency,
+			&i.PostedBalanceMinor,
+			&i.AsOfVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

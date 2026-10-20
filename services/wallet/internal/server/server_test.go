@@ -18,6 +18,7 @@ import (
 
 type fakeWalletStore struct {
 	getWalletErr error
+	verifyPage   repository.WalletVerificationPage
 }
 
 func (f fakeWalletStore) CreateWallet(context.Context, identifiers.UUID, string, string, string) (repository.CommandResult, error) {
@@ -43,6 +44,12 @@ func (f fakeWalletStore) GetStats(context.Context) (repository.StatsResponse, er
 		Service:           "wallet",
 		AttemptsHistogram: map[int32]int64{},
 	}, nil
+}
+func (f fakeWalletStore) VerifyWallets(context.Context, identifiers.UUID, identifiers.UUID, int32) (repository.WalletVerificationPage, error) {
+	if f.verifyPage.Wallets == nil {
+		return repository.WalletVerificationPage{Wallets: []repository.WalletVerificationRow{}}, nil
+	}
+	return f.verifyPage, nil
 }
 
 func TestHealthEndpointsAndRequestHeaders(t *testing.T) {
@@ -181,5 +188,42 @@ func TestStatsEndpoint(t *testing.T) {
 	}
 	if resp.Service != "wallet" {
 		t.Fatalf("service = %q, want wallet", resp.Service)
+	}
+}
+
+func TestVerifyWalletsEndpointRequiresPairedCursorAndReturnsPage(t *testing.T) {
+	cfg := config.Config{
+		HTTPAddr:         ":8080",
+		InternalHTTPAddr: ":8085",
+		InternalToken:    "test-secret-token",
+		HealthTimeout:    time.Second,
+	}
+	tenantID := identifiers.MustParse("0192f4b7-6d92-7a4d-8cb5-1b3f9d8f1111")
+	walletID := identifiers.MustParse("0192f4b7-6d92-7a4d-8cb5-1b3f9d8f2222")
+	server := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), identifiers.NewDeterministicGenerator(), Dependencies{}, fakeWalletStore{
+		verifyPage: repository.WalletVerificationPage{Wallets: []repository.WalletVerificationRow{{TenantID: tenantID, WalletID: walletID, Currency: "USD", PostedBalanceMinor: 12, AsOfVersion: 2}}},
+	})
+
+	missingCursorPart := httptest.NewRequest(http.MethodGet, "/internal/v1/wallets/verify?after_tenant_id="+tenantID.String(), nil)
+	missingCursorPart.Header.Set("X-Internal-Token", cfg.InternalToken)
+	missingCursorRec := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(missingCursorRec, missingCursorPart)
+	if missingCursorRec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unpaired cursor status = %d, want 422", missingCursorRec.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/wallets/verify?limit=1", nil)
+	request.Header.Set("X-Internal-Token", cfg.InternalToken)
+	recorder := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("verify status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var page repository.WalletVerificationPage
+	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Wallets) != 1 || page.Wallets[0].PostedBalanceMinor != 12 || page.Wallets[0].AsOfVersion != 2 {
+		t.Fatalf("verification page = %+v", page)
 	}
 }

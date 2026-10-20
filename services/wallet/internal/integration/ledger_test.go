@@ -383,6 +383,53 @@ func TestEveryMutationHasEventAndOutboxVersion(t *testing.T) {
 	}
 }
 
+func TestWriteResponsesAndAuthoritativeBalanceExposeAggregateVersion(t *testing.T) {
+	tenantID := tenant(t)
+	wallet, createResult := createWallet(t, tenantID, "create-version-contract")
+	if createResult.StatusCode != 201 {
+		t.Fatalf("create status = %d", createResult.StatusCode)
+	}
+	var created repository.Wallet
+	if err := json.Unmarshal(createResult.Body, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.AggregateVersion != 1 {
+		t.Fatalf("created aggregate version = %d, want 1", created.AggregateVersion)
+	}
+
+	deposit, err := testRepo.Deposit(context.Background(), tenantID, wallet.WalletID, "version-deposit", hashMoney(t, 10), 10, "contract")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var command repository.JournalCommandResponse
+	if err := json.Unmarshal(deposit.Body, &command); err != nil {
+		t.Fatal(err)
+	}
+	if command.AggregateVersion != 2 {
+		t.Fatalf("deposit aggregate version = %d, want 2", command.AggregateVersion)
+	}
+
+	balance, err := testRepo.GetBalance(context.Background(), tenantID, wallet.WalletID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if balance.AsOfVersion != 2 || balance.Balance.CurrentMinor != 10 {
+		t.Fatalf("balance = %+v, want version 2 and 10 minor units", balance)
+	}
+
+	var payload struct {
+		Side      string `json:"side"`
+		EntryType string `json:"entry_type"`
+		Reference string `json:"reference"`
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT payload->'data'->>'side', payload->'data'->>'entry_type', payload->'data'->>'reference' FROM events WHERE tenant_id = $1 AND aggregate_id = $2 AND aggregate_version = 2`, tenantID, wallet.WalletID).Scan(&payload.Side, &payload.EntryType, &payload.Reference); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Side != "CREDIT" || payload.EntryType != "DEPOSIT" || payload.Reference != "contract" {
+		t.Fatalf("enriched event payload = %+v", payload)
+	}
+}
+
 func TestRandomDepositsWithdrawalsAndRetriesConserveMoney(t *testing.T) {
 	tenantID := tenant(t)
 	wallet, _ := createWallet(t, tenantID, "create-property")

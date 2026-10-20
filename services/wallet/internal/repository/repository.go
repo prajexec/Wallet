@@ -47,12 +47,13 @@ type CommandResult struct {
 }
 
 type Wallet struct {
-	TenantID  identifiers.UUID `json:"tenant_id"`
-	WalletID  identifiers.UUID `json:"wallet_id"`
-	AccountID identifiers.UUID `json:"account_id"`
-	Currency  money.Currency   `json:"currency"`
-	Status    string           `json:"status"`
-	CreatedAt time.Time        `json:"created_at"`
+	TenantID         identifiers.UUID `json:"tenant_id"`
+	WalletID         identifiers.UUID `json:"wallet_id"`
+	AccountID        identifiers.UUID `json:"account_id"`
+	Currency         money.Currency   `json:"currency"`
+	Status           string           `json:"status"`
+	CreatedAt        time.Time        `json:"created_at"`
+	AggregateVersion int64            `json:"aggregate_version"`
 }
 
 type Balance struct {
@@ -66,6 +67,7 @@ type BalanceResponse struct {
 	WalletID      identifiers.UUID `json:"wallet_id"`
 	Balance       Balance          `json:"balance"`
 	Authoritative bool             `json:"authoritative"`
+	AsOfVersion   int64            `json:"as_of_version"`
 }
 
 type JournalCommandResponse struct {
@@ -74,6 +76,21 @@ type JournalCommandResponse struct {
 	EventID              identifiers.UUID `json:"event_id"`
 	AmountMinor          int64            `json:"amount_minor"`
 	Currency             money.Currency   `json:"currency"`
+	AggregateVersion     int64            `json:"aggregate_version"`
+}
+
+type WalletVerificationRow struct {
+	TenantID           identifiers.UUID `json:"tenant_id"`
+	WalletID           identifiers.UUID `json:"wallet_id"`
+	Currency           string           `json:"currency"`
+	PostedBalanceMinor int64            `json:"posted_balance_minor"`
+	AsOfVersion        int64            `json:"as_of_version"`
+}
+
+type WalletVerificationPage struct {
+	Wallets           []WalletVerificationRow `json:"wallets"`
+	NextAfterTenantID *identifiers.UUID       `json:"next_after_tenant_id,omitempty"`
+	NextAfterWalletID *identifiers.UUID       `json:"next_after_wallet_id,omitempty"`
 }
 
 type EntryPosting struct {
@@ -239,26 +256,26 @@ func canonicalJSON(body []byte) ([]byte, error) {
 	return json.Marshal(value)
 }
 
-func (r *Repository) appendEvent(ctx context.Context, q *walletdb.Queries, tenantID, aggregateID identifiers.UUID, eventType string, data any, occurredAt time.Time) (identifiers.UUID, error) {
+func (r *Repository) appendEvent(ctx context.Context, q *walletdb.Queries, tenantID, aggregateID identifiers.UUID, eventType string, data any, occurredAt time.Time) (identifiers.UUID, int64, error) {
 	eventID, err := r.ids.Generate()
 	if err != nil {
-		return identifiers.UUID{}, err
+		return identifiers.UUID{}, 0, err
 	}
 	correlationID, err := r.ids.Generate()
 	if err != nil {
-		return identifiers.UUID{}, err
+		return identifiers.UUID{}, 0, err
 	}
 	nextVersion, err := q.GetNextAggregateVersion(ctx, walletdb.GetNextAggregateVersionParams{TenantID: tenantID, AggregateID: aggregateID})
 	if err != nil {
-		return identifiers.UUID{}, err
+		return identifiers.UUID{}, 0, err
 	}
 	envelope, err := events.NewEnvelope(eventID, eventType, 1, occurredAt.UTC(), tenantID, "wallet", aggregateID, nextVersion, r.producer, correlationID, nil, data, map[string]any{})
 	if err != nil {
-		return identifiers.UUID{}, err
+		return identifiers.UUID{}, 0, err
 	}
 	payload, err := json.Marshal(envelope)
 	if err != nil {
-		return identifiers.UUID{}, err
+		return identifiers.UUID{}, 0, err
 	}
 	if _, err := q.InsertEvent(ctx, walletdb.InsertEventParams{
 		TenantID:         tenantID,
@@ -273,11 +290,11 @@ func (r *Repository) appendEvent(ctx context.Context, q *walletdb.Queries, tenan
 		OccurredAt:       occurredAt.UTC(),
 		Payload:          payload,
 	}); err != nil {
-		return identifiers.UUID{}, fmt.Errorf("insert wallet event: %w", err)
+		return identifiers.UUID{}, 0, fmt.Errorf("insert wallet event: %w", err)
 	}
 	outboxID, err := r.ids.Generate()
 	if err != nil {
-		return identifiers.UUID{}, err
+		return identifiers.UUID{}, 0, err
 	}
 	if _, err := q.InsertOutboxMessage(ctx, walletdb.InsertOutboxMessageParams{
 		TenantID:      tenantID,
@@ -288,9 +305,58 @@ func (r *Repository) appendEvent(ctx context.Context, q *walletdb.Queries, tenan
 		Attempts:      0,
 		NextAttemptAt: occurredAt.UTC(),
 	}); err != nil {
-		return identifiers.UUID{}, fmt.Errorf("insert wallet outbox message: %w", err)
+		return identifiers.UUID{}, 0, fmt.Errorf("insert wallet outbox message: %w", err)
 	}
-	return eventID, nil
+	return eventID, nextVersion, nil
+}
+
+// VerifyWallets scans wallets across all tenants using keyset pagination in a REPEATABLE READ snapshot.
+func (r *Repository) VerifyWallets(ctx context.Context, afterTenantID, afterWalletID identifiers.UUID, limit int32) (WalletVerificationPage, error) {
+	if (afterTenantID.IsZero()) != (afterWalletID.IsZero()) {
+		return WalletVerificationPage{}, errors.New("after_tenant_id and after_wallet_id must be provided together")
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return WalletVerificationPage{}, fmt.Errorf("begin repeatable read verification tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	q := walletdb.New(tx)
+	rows, err := q.ListWalletVerificationRows(ctx, walletdb.ListWalletVerificationRowsParams{
+		Column1: afterTenantID,
+		Column2: afterWalletID,
+		Limit:   limit,
+	})
+	if err != nil {
+		return WalletVerificationPage{}, fmt.Errorf("list wallet verification rows: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return WalletVerificationPage{}, fmt.Errorf("commit verification tx: %w", err)
+	}
+
+	result := WalletVerificationPage{
+		Wallets: make([]WalletVerificationRow, len(rows)),
+	}
+	for i, row := range rows {
+		result.Wallets[i] = WalletVerificationRow{
+			TenantID:           row.TenantID,
+			WalletID:           row.WalletID,
+			Currency:           row.Currency,
+			PostedBalanceMinor: row.PostedBalanceMinor,
+			AsOfVersion:        row.AsOfVersion,
+		}
+	}
+	if len(rows) == int(limit) {
+		last := rows[len(rows)-1]
+		nextT := last.TenantID
+		nextW := last.WalletID
+		result.NextAfterTenantID = &nextT
+		result.NextAfterWalletID = &nextW
+	}
+	return result, nil
 }
 
 func ensureSystemAccount(ctx context.Context, q *walletdb.Queries, ids identifiers.Generator, tenantID identifiers.UUID, name string, now time.Time) (walletdb.Account, error) {
