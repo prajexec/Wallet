@@ -101,7 +101,7 @@ func bootstrap(manager ConsumerManager, streamName, consumerName, subjectPrefix 
 
 	// 1. Ensure stream exists.
 	desiredStream := DefaultStreamConfigWithPrefix(streamName, subjectPrefix)
-	_, err := manager.StreamInfo(streamName)
+	streamInfo, err := manager.StreamInfo(streamName)
 	if errors.Is(err, nats.ErrStreamNotFound) {
 		_, err = manager.AddStream(&desiredStream)
 		if err != nil && !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
@@ -109,6 +109,8 @@ func bootstrap(manager ConsumerManager, streamName, consumerName, subjectPrefix 
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("lookup stream %q: %w", streamName, err)
+	} else if streamInfo.Config.MaxAge != 0 {
+		return nil, fmt.Errorf("stream %q must have unlimited retention (MaxAge=0)", streamName)
 	}
 
 	// 2. Ensure consumer exists and matches desired config.

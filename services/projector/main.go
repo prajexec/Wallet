@@ -13,6 +13,7 @@ import (
 
 	"digitalwallet/services/projector/internal/config"
 	"digitalwallet/services/projector/internal/consumer"
+	"digitalwallet/services/projector/internal/projection"
 	"digitalwallet/services/projector/internal/server"
 	"digitalwallet/shared/identifiers"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -44,38 +45,38 @@ func main() {
 		logger.Error("create JetStream context", "error", err)
 		os.Exit(1)
 	}
-	if _, err := consumer.BootstrapConsumerWithPrefix(jetStream, cfg.StreamName, cfg.ConsumerName, cfg.SubjectPrefix); err != nil {
-		logger.Error("bootstrap projector consumer", "error", err)
-		os.Exit(1)
+	consumerRunners := make([]*consumer.Runner, 0, 2)
+	gapSweepers := make([]*consumer.GapSweeper, 0, 2)
+	for _, slot := range []string{"a", "b"} {
+		consumerName := cfg.ConsumerName + "-balance-" + slot
+		if _, err := consumer.BootstrapConsumerWithPrefix(jetStream, cfg.StreamName, consumerName, cfg.SubjectPrefix); err != nil {
+			logger.Error("bootstrap projector consumer", "consumer", consumerName, "error", err)
+			os.Exit(1)
+		}
+		pullSub, err := jetStream.PullSubscribe(cfg.SubjectPrefix+".>", consumerName, nats.Bind(cfg.StreamName, consumerName))
+		if err != nil {
+			logger.Error("subscribe projector pull consumer", "consumer", consumerName, "error", err)
+			os.Exit(1)
+		}
+		handler, err := projection.NewHandler(slot)
+		if err != nil {
+			logger.Error("create projection handler", "slot", slot, "error", err)
+			os.Exit(1)
+		}
+		consumerRunners = append(consumerRunners, consumer.NewRunner(database, pullSub, handler, consumer.RunnerConfig{
+			StreamName: cfg.StreamName, ConsumerName: consumerName, BatchSize: 10,
+			FetchTimeout: time.Second, MaxDeliver: 5, Logger: logger,
+		}))
+		gapSweepers = append(gapSweepers, consumer.NewGapSweeper(database, consumer.SweeperConfig{
+			ConsumerName: consumerName, GapWindow: cfg.GapWindow, PollInterval: time.Second, Logger: logger,
+		}))
 	}
-
-	pullSub, err := jetStream.PullSubscribe(cfg.SubjectPrefix+".>", cfg.ConsumerName, nats.Bind(cfg.StreamName, cfg.ConsumerName))
-	if err != nil {
-		logger.Error("subscribe projector pull consumer", "error", err)
-		os.Exit(1)
-	}
-
-	consumerRunner := consumer.NewRunner(database, pullSub, &consumer.AppliedEventsLogHandler{ConsumerName: cfg.ConsumerName}, consumer.RunnerConfig{
-		StreamName:   cfg.StreamName,
-		ConsumerName: cfg.ConsumerName,
-		BatchSize:    10,
-		FetchTimeout: time.Second,
-		MaxDeliver:   5,
-		Logger:       logger,
-	})
-
-	gapSweeper := consumer.NewGapSweeper(database, consumer.SweeperConfig{
-		ConsumerName: cfg.ConsumerName,
-		GapWindow:    cfg.GapWindow,
-		PollInterval: time.Second,
-		Logger:       logger,
-	})
 
 	httpServer := server.New(cfg, logger, identifiers.NewGenerator(), server.Dependencies{
 		Postgres: database.PingContext,
 		NATS:     func(context.Context) error { return natsConnection.FlushTimeout(cfg.HealthTimeout) },
 		Stats: func(ctx context.Context) (server.StatsResponse, error) {
-			s, err := consumer.QueryStats(ctx, database, cfg.ConsumerName)
+			s, err := consumer.QueryStats(ctx, database, cfg.ConsumerName+"-balance-a")
 			if err != nil {
 				return server.StatsResponse{}, err
 			}
@@ -89,21 +90,27 @@ func main() {
 				DeadLetterCount:             s.DeadLetterCount,
 			}, nil
 		},
+		Read: projection.NewStore(database),
 	})
 	rootContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go func() {
-		if err := consumerRunner.Run(rootContext); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("consumer runner error", "error", err)
-		}
-	}()
-
-	go func() {
-		if err := gapSweeper.Run(rootContext); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("gap sweeper error", "error", err)
-		}
-	}()
+	for _, runner := range consumerRunners {
+		runner := runner
+		go func() {
+			if err := runner.Run(rootContext); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("consumer runner error", "error", err)
+			}
+		}()
+	}
+	for _, sweeper := range gapSweepers {
+		sweeper := sweeper
+		go func() {
+			if err := sweeper.Run(rootContext); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("gap sweeper error", "error", err)
+			}
+		}()
+	}
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
@@ -116,8 +123,12 @@ func main() {
 	case <-rootContext.Done():
 		shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
-		_ = consumerRunner.Stop(shutdownContext)
-		_ = gapSweeper.Stop(shutdownContext)
+		for _, runner := range consumerRunners {
+			_ = runner.Stop(shutdownContext)
+		}
+		for _, sweeper := range gapSweepers {
+			_ = sweeper.Stop(shutdownContext)
+		}
 		if err := httpServer.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("shutdown HTTP server", "error", err)
 			os.Exit(1)

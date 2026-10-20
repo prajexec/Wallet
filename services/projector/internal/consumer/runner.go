@@ -419,6 +419,9 @@ DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
 		if err := r.handler.HandleEvent(ctx, tx, envelope); err != nil {
 			return fmt.Errorf("handle event: %w", err)
 		}
+		if err := recordAppliedEvent(ctx, tx, r.config.ConsumerName, envelope, now); err != nil {
+			return fmt.Errorf("record applied event: %w", err)
+		}
 		r.appliedCount.Add(1)
 
 		// Drain any buffered successors in order within the same transaction:
@@ -449,6 +452,9 @@ WHERE tenant_id = $1 AND consumer_name = $2 AND aggregate_id = $3 AND aggregate_
 
 			if err := r.handler.HandleEvent(ctx, tx, bEnvelope); err != nil {
 				return fmt.Errorf("handle buffered successor v%d: %w", ver, err)
+			}
+			if err := recordAppliedEvent(ctx, tx, r.config.ConsumerName, bEnvelope, now); err != nil {
+				return fmt.Errorf("record buffered applied event v%d: %w", ver, err)
 			}
 			r.appliedCount.Add(1)
 
@@ -498,6 +504,16 @@ DO UPDATE SET last_version = EXCLUDED.last_version, updated_at = EXCLUDED.update
 	}
 
 	return tx.Commit()
+}
+
+func recordAppliedEvent(ctx context.Context, tx *sql.Tx, consumerName string, envelope events.Envelope, appliedAt time.Time) error {
+	const query = `
+INSERT INTO applied_events_log (tenant_id, consumer_name, event_id, aggregate_id, aggregate_version, event_type, applied_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (tenant_id, consumer_name, event_id) DO NOTHING;
+`
+	_, err := tx.ExecContext(ctx, query, envelope.TenantID, consumerName, envelope.EventID, envelope.AggregateID, envelope.AggregateVersion, envelope.EventType, appliedAt)
+	return err
 }
 
 func (r *Runner) handlePoison(ctx context.Context, msg *nats.Msg, eventID, aggregateID identifiers.UUID, version int64, payload []byte, errMsg string, deliveryCount int) {
