@@ -49,7 +49,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	pullSub, err := jetStream.PullSubscribe("", cfg.ConsumerName, nats.Bind(cfg.StreamName, cfg.ConsumerName))
+	pullSub, err := jetStream.PullSubscribe("events.>", cfg.ConsumerName, nats.Bind(cfg.StreamName, cfg.ConsumerName))
 	if err != nil {
 		logger.Error("subscribe projector pull consumer", "error", err)
 		os.Exit(1)
