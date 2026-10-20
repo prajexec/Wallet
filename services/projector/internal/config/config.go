@@ -22,6 +22,7 @@ type Config struct {
 	StreamName      string
 	ConsumerName    string
 	GapWindow       time.Duration
+	SubjectPrefix   string
 }
 
 func Load() (Config, error) { return LoadFrom(os.LookupEnv) }
@@ -42,6 +43,7 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		StreamName:      valueOr(lookup, "NATS_STREAM", "WALLET_EVENTS"),
 		ConsumerName:    valueOr(lookup, "NATS_CONSUMER", "projector"),
 		GapWindow:       durationOr(lookup, "ORDERING_GAP_WINDOW", 30*time.Second),
+		SubjectPrefix:   valueOr(lookup, "NATS_SUBJECT_PREFIX", "events"),
 	}
 	var problems []string
 	if strings.TrimSpace(cfg.ServiceName) == "" {

@@ -38,13 +38,13 @@ func (m *fakeStreamManager) StreamInfo(_ string, _ ...nats.JSOpt) (*nats.StreamI
 
 func TestBootstrapWalletEventsIsIdempotentAndReconcilesConfig(t *testing.T) {
 	manager := &fakeStreamManager{}
-	if _, err := bootstrapWalletEvents(manager); err != nil {
+	if _, err := bootstrapWalletEvents(manager, WalletEventsStream, "events"); err != nil {
 		t.Fatalf("first bootstrap error = %v", err)
 	}
 	if manager.addCalls != 1 || manager.updateCalls != 0 {
 		t.Fatalf("first bootstrap calls add=%d update=%d", manager.addCalls, manager.updateCalls)
 	}
-	if _, err := bootstrapWalletEvents(manager); err != nil {
+	if _, err := bootstrapWalletEvents(manager, WalletEventsStream, "events"); err != nil {
 		t.Fatalf("second bootstrap error = %v", err)
 	}
 	if manager.addCalls != 1 || manager.updateCalls != 0 {
@@ -52,7 +52,7 @@ func TestBootstrapWalletEventsIsIdempotentAndReconcilesConfig(t *testing.T) {
 	}
 
 	manager.info.Config.Storage = nats.MemoryStorage
-	if _, err := bootstrapWalletEvents(manager); err != nil {
+	if _, err := bootstrapWalletEvents(manager, WalletEventsStream, "events"); err != nil {
 		t.Fatalf("reconcile bootstrap error = %v", err)
 	}
 	if manager.updateCalls != 1 || manager.info.Config.Storage != nats.FileStorage {

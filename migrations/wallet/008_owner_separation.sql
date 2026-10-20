@@ -21,8 +21,8 @@ DECLARE
     runtime_role name;
 BEGIN
     CASE current_database()
-        WHEN 'wallet_source' THEN runtime_role := 'wallet_source_role';
-        WHEN 'wallet_destination' THEN runtime_role := 'wallet_destination_role';
+        WHEN 'wallet_source', 'wallet_source_test' THEN runtime_role := 'wallet_source_role';
+        WHEN 'wallet_destination', 'wallet_destination_test' THEN runtime_role := 'wallet_destination_role';
         ELSE
             RAISE EXCEPTION 'wallet migrations cannot run against database %', current_database();
     END CASE;

@@ -49,7 +49,7 @@ func main() {
 		logger.Error("create JetStream context", "error", err)
 		os.Exit(1)
 	}
-	if _, err := relay.BootstrapWalletEvents(jetStream); err != nil {
+	if _, err := relay.BootstrapWalletEventsWithPrefix(jetStream, cfg.NATSStream, cfg.NATSSubjectPrefix); err != nil {
 		logger.Error("bootstrap wallet events stream", "error", err)
 		os.Exit(1)
 	}
@@ -70,6 +70,7 @@ func main() {
 		PollInterval:   cfg.OutboxPollInterval,
 		LeaseDuration:  cfg.OutboxLease,
 		PublishTimeout: cfg.OutboxPublish,
+		SubjectPrefix:  cfg.NATSSubjectPrefix,
 		Logger:         logger,
 	})
 	go func() {

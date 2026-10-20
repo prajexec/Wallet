@@ -26,12 +26,15 @@ var (
 	ErrInvalidMessage = errors.New("invalid event message")
 )
 
-// SubjectFor returns the stable subject for an event:
-// events.<tenant_id>.<aggregate_type>.<event_type>.
-//
-// Event types may contain dots because the event catalog uses names such as
-// wallet.deposit_posted. Aggregate types remain one subject token.
-func SubjectFor(tenantID identifiers.UUID, aggregateType, eventType string) (string, error) {
+// SubjectWithPrefix returns the subject for an event with a configurable prefix:
+// <prefix>.<tenant_id>.<aggregate_type>.<event_type>.
+func SubjectWithPrefix(prefix string, tenantID identifiers.UUID, aggregateType, eventType string) (string, error) {
+	if prefix == "" {
+		prefix = SubjectPrefix
+	}
+	if err := validateSubjectComponent("subject_prefix", prefix, false); err != nil {
+		return "", err
+	}
 	if tenantID.IsZero() {
 		return "", fmt.Errorf("%w: tenant_id is zero", ErrInvalidSubject)
 	}
@@ -44,7 +47,16 @@ func SubjectFor(tenantID identifiers.UUID, aggregateType, eventType string) (str
 	if err := validateSubjectComponent("event_type", eventType, true); err != nil {
 		return "", err
 	}
-	return strings.Join([]string{SubjectPrefix, tenantID.String(), aggregateType, eventType}, "."), nil
+	return strings.Join([]string{prefix, tenantID.String(), aggregateType, eventType}, "."), nil
+}
+
+// SubjectFor returns the stable subject for an event:
+// events.<tenant_id>.<aggregate_type>.<event_type>.
+//
+// Event types may contain dots because the event catalog uses names such as
+// wallet.deposit_posted. Aggregate types remain one subject token.
+func SubjectFor(tenantID identifiers.UUID, aggregateType, eventType string) (string, error) {
+	return SubjectWithPrefix(SubjectPrefix, tenantID, aggregateType, eventType)
 }
 
 // SubjectForEnvelope returns the subject for a validated durable envelope.
@@ -121,7 +133,9 @@ func (m Message) Validate() error {
 	if err != nil {
 		return err
 	}
-	subject, err := SubjectForEnvelope(envelope)
+	parts := strings.SplitN(m.Subject, ".", 2)
+	prefix := parts[0]
+	subject, err := SubjectWithPrefix(prefix, envelope.TenantID, envelope.AggregateType, envelope.EventType)
 	if err != nil {
 		return fmt.Errorf("%w: subject from payload: %v", ErrInvalidMessage, err)
 	}

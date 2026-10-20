@@ -29,6 +29,8 @@ type Config struct {
 	OutboxPollInterval time.Duration
 	OutboxLease        time.Duration
 	OutboxPublish      time.Duration
+	NATSStream         string
+	NATSSubjectPrefix  string
 }
 
 // Load reads and validates the process environment.
@@ -54,6 +56,8 @@ func LoadFrom(lookup LookupFunc) (Config, error) {
 		OutboxPollInterval: durationOr(lookup, "OUTBOX_RELAY_POLL_INTERVAL", durationOr(lookup, "OUTBOX_POLL_INTERVAL", 250*time.Millisecond)),
 		OutboxLease:        durationOr(lookup, "OUTBOX_RELAY_LEASE", durationOr(lookup, "OUTBOX_LEASE", 5*time.Second)),
 		OutboxPublish:      durationOr(lookup, "OUTBOX_PUBLISH_TIMEOUT", 2*time.Second),
+		NATSStream:         valueOr(lookup, "NATS_STREAM", "WALLET_EVENTS"),
+		NATSSubjectPrefix:  valueOr(lookup, "NATS_SUBJECT_PREFIX", "events"),
 	}
 	config.DatabaseURL, _ = lookup("DATABASE_URL")
 	config.NATSURL, _ = lookup("NATS_URL")

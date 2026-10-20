@@ -21,9 +21,20 @@ type StreamManager interface {
 
 // WalletEventsStreamConfig returns the desired durable event stream settings.
 func WalletEventsStreamConfig() nats.StreamConfig {
+	return WalletEventsStreamConfigWithPrefix(WalletEventsStream, "events")
+}
+
+// WalletEventsStreamConfigWithPrefix returns the desired durable event stream settings with a custom stream and subject prefix.
+func WalletEventsStreamConfigWithPrefix(streamName, subjectPrefix string) nats.StreamConfig {
+	if streamName == "" {
+		streamName = WalletEventsStream
+	}
+	if subjectPrefix == "" {
+		subjectPrefix = "events"
+	}
 	return nats.StreamConfig{
-		Name:              WalletEventsStream,
-		Subjects:          []string{"events.>"},
+		Name:              streamName,
+		Subjects:          []string{subjectPrefix + ".>"},
 		Storage:           nats.FileStorage,
 		Duplicates:        2 * time.Minute,
 		Retention:         nats.LimitsPolicy,
@@ -38,15 +49,26 @@ func WalletEventsStreamConfig() nats.StreamConfig {
 // BootstrapWalletEvents creates or reconciles WALLET_EVENTS. Repeated calls
 // are safe and a concurrent creator is handled by looking the stream up again.
 func BootstrapWalletEvents(jetStream nats.JetStreamContext) (*nats.StreamInfo, error) {
-	return bootstrapWalletEvents(jetStream)
+	return BootstrapWalletEventsWithPrefix(jetStream, WalletEventsStream, "events")
 }
 
-func bootstrapWalletEvents(manager StreamManager) (*nats.StreamInfo, error) {
+// BootstrapWalletEventsWithPrefix creates or reconciles the stream with custom name and subject prefix.
+func BootstrapWalletEventsWithPrefix(jetStream nats.JetStreamContext, streamName, subjectPrefix string) (*nats.StreamInfo, error) {
+	return bootstrapWalletEvents(jetStream, streamName, subjectPrefix)
+}
+
+func bootstrapWalletEvents(manager StreamManager, streamName, subjectPrefix string) (*nats.StreamInfo, error) {
 	if manager == nil {
 		return nil, errors.New("wallet events stream manager is nil")
 	}
-	desired := WalletEventsStreamConfig()
-	info, err := manager.StreamInfo(WalletEventsStream)
+	if streamName == "" {
+		streamName = WalletEventsStream
+	}
+	if subjectPrefix == "" {
+		subjectPrefix = "events"
+	}
+	desired := WalletEventsStreamConfigWithPrefix(streamName, subjectPrefix)
+	info, err := manager.StreamInfo(streamName)
 	if errors.Is(err, nats.ErrStreamNotFound) {
 		info, err = manager.AddStream(&desired)
 		if err == nil {
@@ -55,7 +77,7 @@ func bootstrapWalletEvents(manager StreamManager) (*nats.StreamInfo, error) {
 		if !errors.Is(err, nats.ErrStreamNameAlreadyInUse) {
 			return nil, err
 		}
-		info, err = manager.StreamInfo(WalletEventsStream)
+		info, err = manager.StreamInfo(streamName)
 	}
 	if err != nil {
 		return nil, err

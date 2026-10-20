@@ -44,12 +44,12 @@ func main() {
 		logger.Error("create JetStream context", "error", err)
 		os.Exit(1)
 	}
-	if _, err := consumer.BootstrapConsumer(jetStream, cfg.StreamName, cfg.ConsumerName); err != nil {
+	if _, err := consumer.BootstrapConsumerWithPrefix(jetStream, cfg.StreamName, cfg.ConsumerName, cfg.SubjectPrefix); err != nil {
 		logger.Error("bootstrap projector consumer", "error", err)
 		os.Exit(1)
 	}
 
-	pullSub, err := jetStream.PullSubscribe("events.>", cfg.ConsumerName, nats.Bind(cfg.StreamName, cfg.ConsumerName))
+	pullSub, err := jetStream.PullSubscribe(cfg.SubjectPrefix+".>", cfg.ConsumerName, nats.Bind(cfg.StreamName, cfg.ConsumerName))
 	if err != nil {
 		logger.Error("subscribe projector pull consumer", "error", err)
 		os.Exit(1)

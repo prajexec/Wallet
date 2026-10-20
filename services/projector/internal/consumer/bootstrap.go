@@ -23,12 +23,20 @@ type ConsumerManager interface {
 
 // DefaultStreamConfig returns the standard file-backed WALLET_EVENTS stream configuration.
 func DefaultStreamConfig(name string) nats.StreamConfig {
+	return DefaultStreamConfigWithPrefix(name, "events")
+}
+
+// DefaultStreamConfigWithPrefix returns the stream configuration with custom subject prefix.
+func DefaultStreamConfigWithPrefix(name, subjectPrefix string) nats.StreamConfig {
 	if strings.TrimSpace(name) == "" {
 		name = "WALLET_EVENTS"
 	}
+	if strings.TrimSpace(subjectPrefix) == "" {
+		subjectPrefix = "events"
+	}
 	return nats.StreamConfig{
 		Name:              name,
-		Subjects:          []string{"events.>"},
+		Subjects:          []string{subjectPrefix + ".>"},
 		Storage:           nats.FileStorage,
 		Duplicates:        2 * time.Minute,
 		Retention:         nats.LimitsPolicy,
@@ -41,17 +49,17 @@ func DefaultStreamConfig(name string) nats.StreamConfig {
 }
 
 // DefaultConsumerConfig returns the durable pull consumer settings for projector.
-// Every setting is explicit and documented:
-// - Durable: identifies the consumer state in JetStream across restarts
-// - DeliverPolicy DeliverAll: ensure all events from aggregate version 1 onward are delivered
-// - AckPolicy AckExplicit: individual message ACK only after the database transaction commits
-// - AckWait 30s: generous window for local database transaction while bound for dead-letter/redelivery
-// - MaxDeliver 5: poison message limit before recording into dead_letter_events
-// - MaxAckPending 100: bounds projector in-flight work and memory
-// - FilterSubject events.>: matches all tenant domain events in the stream
 func DefaultConsumerConfig(streamName, consumerName string) nats.ConsumerConfig {
+	return DefaultConsumerConfigWithPrefix(streamName, consumerName, "events")
+}
+
+// DefaultConsumerConfigWithPrefix returns durable pull consumer settings with custom filter subject prefix.
+func DefaultConsumerConfigWithPrefix(streamName, consumerName, subjectPrefix string) nats.ConsumerConfig {
 	if strings.TrimSpace(consumerName) == "" {
 		consumerName = "projector"
+	}
+	if strings.TrimSpace(subjectPrefix) == "" {
+		subjectPrefix = "events"
 	}
 	return nats.ConsumerConfig{
 		Durable:       consumerName,
@@ -62,17 +70,22 @@ func DefaultConsumerConfig(streamName, consumerName string) nats.ConsumerConfig 
 		AckWait:       30 * time.Second,
 		MaxDeliver:    5,
 		MaxAckPending: 100,
-		FilterSubject: "events.>",
+		FilterSubject: subjectPrefix + ".>",
 	}
 }
 
 // BootstrapConsumer creates or reconciles both the stream (if absent) and the durable
 // pull consumer in NATS JetStream idempotently.
 func BootstrapConsumer(jetStream nats.JetStreamContext, streamName, consumerName string) (*nats.ConsumerInfo, error) {
-	return bootstrap(jetStream, streamName, consumerName)
+	return BootstrapConsumerWithPrefix(jetStream, streamName, consumerName, "events")
 }
 
-func bootstrap(manager ConsumerManager, streamName, consumerName string) (*nats.ConsumerInfo, error) {
+// BootstrapConsumerWithPrefix creates or reconciles stream and consumer with custom subject prefix.
+func BootstrapConsumerWithPrefix(jetStream nats.JetStreamContext, streamName, consumerName, subjectPrefix string) (*nats.ConsumerInfo, error) {
+	return bootstrap(jetStream, streamName, consumerName, subjectPrefix)
+}
+
+func bootstrap(manager ConsumerManager, streamName, consumerName, subjectPrefix string) (*nats.ConsumerInfo, error) {
 	if manager == nil {
 		return nil, errors.New("jetstream consumer manager is nil")
 	}
@@ -82,9 +95,12 @@ func bootstrap(manager ConsumerManager, streamName, consumerName string) (*nats.
 	if strings.TrimSpace(consumerName) == "" {
 		consumerName = "projector"
 	}
+	if strings.TrimSpace(subjectPrefix) == "" {
+		subjectPrefix = "events"
+	}
 
 	// 1. Ensure stream exists.
-	desiredStream := DefaultStreamConfig(streamName)
+	desiredStream := DefaultStreamConfigWithPrefix(streamName, subjectPrefix)
 	_, err := manager.StreamInfo(streamName)
 	if errors.Is(err, nats.ErrStreamNotFound) {
 		_, err = manager.AddStream(&desiredStream)
@@ -96,7 +112,7 @@ func bootstrap(manager ConsumerManager, streamName, consumerName string) (*nats.
 	}
 
 	// 2. Ensure consumer exists and matches desired config.
-	desiredConsumer := DefaultConsumerConfig(streamName, consumerName)
+	desiredConsumer := DefaultConsumerConfigWithPrefix(streamName, consumerName, subjectPrefix)
 	info, err := manager.ConsumerInfo(streamName, consumerName)
 	if errors.Is(err, nats.ErrConsumerNotFound) {
 		info, err = manager.AddConsumer(streamName, &desiredConsumer)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -51,6 +52,63 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func testStreamName() string {
+	if s := os.Getenv("NATS_TEST_STREAM"); s != "" {
+		return s
+	}
+	return "WALLET_EVENTS"
+}
+
+func testSubjectPrefix() string {
+	if p := os.Getenv("NATS_TEST_SUBJECT_PREFIX"); p != "" {
+		return p
+	}
+	return "events"
+}
+
+func cleanTenantReadData(t *testing.T, tenantID identifiers.UUID) {
+	t.Helper()
+	dsn := os.Getenv("READ_TEST_MIGRATOR_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/read_test?sslmode=disable"
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = db.ExecContext(ctx, "DELETE FROM applied_events_log WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM aggregate_cursors WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM buffered_events WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM ordering_gaps WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM dead_letter_events WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM inbox_messages WHERE tenant_id = $1", tenantID)
+}
+
+func cleanTenantWalletData(t *testing.T, tenantID identifiers.UUID) {
+	t.Helper()
+	dsn := os.Getenv("WALLET_TEST_MIGRATOR_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_source_test?sslmode=disable"
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = db.ExecContext(ctx, "DELETE FROM outbox_messages WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM events WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM journal_postings WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM journal_transactions WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM accounts WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM wallets WHERE tenant_id = $1", tenantID)
+	_, _ = db.ExecContext(ctx, "DELETE FROM idempotency_records WHERE tenant_id = $1", tenantID)
+}
+
 func getNATSConnection(t *testing.T) (*nats.Conn, nats.JetStreamContext) {
 	t.Helper()
 	natsURL := os.Getenv("NATS_TEST_URL")
@@ -66,9 +124,10 @@ func getNATSConnection(t *testing.T) (*nats.Conn, nats.JetStreamContext) {
 		nc.Close()
 		t.Skipf("cannot create JetStream context: %v", err)
 	}
-	// Ensure WALLET_EVENTS stream exists
-	streamCfg := consumer.DefaultStreamConfig("WALLET_EVENTS")
-	_, err = js.StreamInfo("WALLET_EVENTS")
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
+	streamCfg := consumer.DefaultStreamConfigWithPrefix(stream, prefix)
+	_, err = js.StreamInfo(stream)
 	if errors.Is(err, nats.ErrStreamNotFound) {
 		_, err = js.AddStream(&streamCfg)
 	}
@@ -108,7 +167,8 @@ func makeEnvelope(t *testing.T, tenantID, aggregateID identifiers.UUID, version 
 
 func publishEnvelope(t *testing.T, js nats.JetStreamContext, env events.Envelope) *nats.PubAck {
 	t.Helper()
-	subject, err := events.SubjectFor(env.TenantID, env.AggregateType, env.EventType)
+	prefix := testSubjectPrefix()
+	subject, err := events.SubjectWithPrefix(prefix, env.TenantID, env.AggregateType, env.EventType)
 	if err != nil {
 		t.Fatalf("subject for envelope: %v", err)
 	}
@@ -134,19 +194,23 @@ func TestConsumer_CrashBeforeAck_RedeliveryNoDoubleEffect(t *testing.T) {
 	nc, js := getNATSConnection(t)
 	defer nc.Close()
 
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
 	ids := identifiers.NewGenerator()
 	tenantID, _ := ids.Generate()
+	t.Cleanup(func() { cleanTenantReadData(t, tenantID) })
 	aggregateID, _ := ids.Generate()
 	randID, _ := ids.Generate()
 	consumerName := "crash_ack_" + randID.String()
+	t.Cleanup(func() { _ = js.DeleteConsumer(stream, consumerName) })
 
-	filterSubject := "events." + tenantID.String() + ".>"
+	filterSubject := prefix + "." + tenantID.String() + ".>"
 	// 1. Create consumer with short AckWait so redelivery is prompt
-	consumerConfig := consumer.DefaultConsumerConfig("WALLET_EVENTS", consumerName)
+	consumerConfig := consumer.DefaultConsumerConfigWithPrefix(stream, consumerName, prefix)
 	consumerConfig.FilterSubject = filterSubject
 	consumerConfig.AckWait = time.Second
 	consumerConfig.MaxDeliver = 5
-	if _, err := js.AddConsumer("WALLET_EVENTS", &consumerConfig); err != nil {
+	if _, err := js.AddConsumer(stream, &consumerConfig); err != nil {
 		t.Fatalf("add consumer: %v", err)
 	}
 
@@ -155,14 +219,14 @@ func TestConsumer_CrashBeforeAck_RedeliveryNoDoubleEffect(t *testing.T) {
 	publishEnvelope(t, js, env1)
 
 	// 3. Run runner with failpoint: stops immediately after DB commit before msg.Ack()
-	sub1, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	sub1, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe: %v", err)
 	}
 
 	var crashed atomic.Bool
 	runner1 := consumer.NewRunnerForTesting(testReadDB, sub1, nil, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    1,
 		FetchTimeout: 500 * time.Millisecond,
@@ -204,13 +268,13 @@ func TestConsumer_CrashBeforeAck_RedeliveryNoDoubleEffect(t *testing.T) {
 	time.Sleep(1200 * time.Millisecond)
 
 	// 5. Start normal runner on the same consumer to handle the redelivery
-	sub2, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	sub2, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe 2: %v", err)
 	}
 
 	runner2 := consumer.NewRunner(testReadDB, sub2, nil, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    1,
 		FetchTimeout: 500 * time.Millisecond,
@@ -245,19 +309,23 @@ func TestConsumer_OutOfOrderBufferingAndDrain(t *testing.T) {
 	nc, js := getNATSConnection(t)
 	defer nc.Close()
 
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
 	ids := identifiers.NewGenerator()
 	tenantID, _ := ids.Generate()
+	t.Cleanup(func() { cleanTenantReadData(t, tenantID) })
 	aggregateID, _ := ids.Generate()
 	randID, _ := ids.Generate()
 	consumerName := "ooo_" + randID.String()
+	t.Cleanup(func() { _ = js.DeleteConsumer(stream, consumerName) })
 
-	filterSubject := "events." + tenantID.String() + ".>"
-	cfg := consumer.DefaultConsumerConfig("WALLET_EVENTS", consumerName)
+	filterSubject := prefix + "." + tenantID.String() + ".>"
+	cfg := consumer.DefaultConsumerConfigWithPrefix(stream, consumerName, prefix)
 	cfg.FilterSubject = filterSubject
-	if _, err := js.AddConsumer("WALLET_EVENTS", &cfg); err != nil {
+	if _, err := js.AddConsumer(stream, &cfg); err != nil {
 		t.Fatalf("add consumer: %v", err)
 	}
-	sub, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	sub, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe: %v", err)
 	}
@@ -267,7 +335,7 @@ func TestConsumer_OutOfOrderBufferingAndDrain(t *testing.T) {
 	env3 := makeEnvelope(t, tenantID, aggregateID, 3)
 
 	runner := consumer.NewRunner(testReadDB, sub, nil, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    1,
 		FetchTimeout: 200 * time.Millisecond,
@@ -351,25 +419,29 @@ func TestConsumer_GapDetectionAndResolutionOnMissingPredecessor(t *testing.T) {
 	nc, js := getNATSConnection(t)
 	defer nc.Close()
 
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
 	ids := identifiers.NewGenerator()
 	tenantID, _ := ids.Generate()
+	t.Cleanup(func() { cleanTenantReadData(t, tenantID) })
 	aggregateID, _ := ids.Generate()
 	randID, _ := ids.Generate()
 	consumerName := "gap_" + randID.String()
+	t.Cleanup(func() { _ = js.DeleteConsumer(stream, consumerName) })
 
-	filterSubject := "events." + tenantID.String() + ".>"
-	cfg := consumer.DefaultConsumerConfig("WALLET_EVENTS", consumerName)
+	filterSubject := prefix + "." + tenantID.String() + ".>"
+	cfg := consumer.DefaultConsumerConfigWithPrefix(stream, consumerName, prefix)
 	cfg.FilterSubject = filterSubject
-	if _, err := js.AddConsumer("WALLET_EVENTS", &cfg); err != nil {
+	if _, err := js.AddConsumer(stream, &cfg); err != nil {
 		t.Fatalf("add consumer: %v", err)
 	}
-	sub, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	sub, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe: %v", err)
 	}
 
 	runner := consumer.NewRunner(testReadDB, sub, nil, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    1,
 		FetchTimeout: 200 * time.Millisecond,
@@ -448,19 +520,23 @@ func TestConsumer_BufferedEventsSurviveRestart(t *testing.T) {
 	nc, js := getNATSConnection(t)
 	defer nc.Close()
 
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
 	ids := identifiers.NewGenerator()
 	tenantID, _ := ids.Generate()
+	t.Cleanup(func() { cleanTenantReadData(t, tenantID) })
 	aggregateID, _ := ids.Generate()
 	randID, _ := ids.Generate()
 	consumerName := "survive_" + randID.String()
+	t.Cleanup(func() { _ = js.DeleteConsumer(stream, consumerName) })
 
-	filterSubject := "events." + tenantID.String() + ".>"
-	cfg := consumer.DefaultConsumerConfig("WALLET_EVENTS", consumerName)
+	filterSubject := prefix + "." + tenantID.String() + ".>"
+	cfg := consumer.DefaultConsumerConfigWithPrefix(stream, consumerName, prefix)
 	cfg.FilterSubject = filterSubject
-	if _, err := js.AddConsumer("WALLET_EVENTS", &cfg); err != nil {
+	if _, err := js.AddConsumer(stream, &cfg); err != nil {
 		t.Fatalf("add consumer: %v", err)
 	}
-	sub1, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	sub1, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe: %v", err)
 	}
@@ -471,7 +547,7 @@ func TestConsumer_BufferedEventsSurviveRestart(t *testing.T) {
 
 	// Run runner 1 until v2 is buffered
 	runner1 := consumer.NewRunner(testReadDB, sub1, nil, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    1,
 		FetchTimeout: 200 * time.Millisecond,
@@ -511,12 +587,12 @@ func TestConsumer_BufferedEventsSurviveRestart(t *testing.T) {
 	nc2, js2 := getNATSConnection(t)
 	defer nc2.Close()
 
-	sub2, err := js2.PullSubscribe(filterSubject, consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	sub2, err := js2.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe 2: %v", err)
 	}
 	runner2 := consumer.NewRunner(testReadDB, sub2, nil, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    1,
 		FetchTimeout: 200 * time.Millisecond,
@@ -558,22 +634,26 @@ func TestConsumer_PoisonMessageWrittenToDeadLetterBeforeAck(t *testing.T) {
 	nc, js := getNATSConnection(t)
 	defer nc.Close()
 
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
 	ids := identifiers.NewGenerator()
 	randID, _ := ids.Generate()
 	consumerName := "dlq_" + randID.String()
+	t.Cleanup(func() { _ = js.DeleteConsumer(stream, consumerName) })
 
 	tenantID, _ := ids.Generate()
+	t.Cleanup(func() { cleanTenantReadData(t, tenantID) })
 	aggregateID, _ := ids.Generate()
-	filterSubject := "events." + tenantID.String() + ".>"
+	filterSubject := prefix + "." + tenantID.String() + ".>"
 
-	cfg := consumer.DefaultConsumerConfig("WALLET_EVENTS", consumerName)
+	cfg := consumer.DefaultConsumerConfigWithPrefix(stream, consumerName, prefix)
 	cfg.FilterSubject = filterSubject
 	cfg.MaxDeliver = 3
 	cfg.AckWait = 500 * time.Millisecond
-	if _, err := js.AddConsumer("WALLET_EVENTS", &cfg); err != nil {
+	if _, err := js.AddConsumer(stream, &cfg); err != nil {
 		t.Fatalf("add consumer: %v", err)
 	}
-	sub, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	sub, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe: %v", err)
 	}
@@ -584,7 +664,7 @@ func TestConsumer_PoisonMessageWrittenToDeadLetterBeforeAck(t *testing.T) {
 	})
 
 	runner := consumer.NewRunner(testReadDB, sub, failingHandler, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    1,
 		FetchTimeout: 200 * time.Millisecond,
@@ -637,25 +717,29 @@ func TestConsumer_DuplicateDeliveryYieldsExactAppliedCount(t *testing.T) {
 	nc, js := getNATSConnection(t)
 	defer nc.Close()
 
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
 	ids := identifiers.NewGenerator()
 	tenantID, _ := ids.Generate()
+	t.Cleanup(func() { cleanTenantReadData(t, tenantID) })
 	aggregateID, _ := ids.Generate()
 	randID, _ := ids.Generate()
 	consumerName := "dedup_n_" + randID.String()
+	t.Cleanup(func() { _ = js.DeleteConsumer(stream, consumerName) })
 
-	filterSubject := "events." + tenantID.String() + ".>"
-	cfg := consumer.DefaultConsumerConfig("WALLET_EVENTS", consumerName)
+	filterSubject := prefix + "." + tenantID.String() + ".>"
+	cfg := consumer.DefaultConsumerConfigWithPrefix(stream, consumerName, prefix)
 	cfg.FilterSubject = filterSubject
-	if _, err := js.AddConsumer("WALLET_EVENTS", &cfg); err != nil {
+	if _, err := js.AddConsumer(stream, &cfg); err != nil {
 		t.Fatalf("add consumer: %v", err)
 	}
-	sub, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	sub, err := js.PullSubscribe(filterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe: %v", err)
 	}
 
 	runner := consumer.NewRunner(testReadDB, sub, nil, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    5,
 		FetchTimeout: 200 * time.Millisecond,
@@ -691,7 +775,7 @@ func TestConsumer_DuplicateDeliveryYieldsExactAppliedCount(t *testing.T) {
 	// Deliver duplicate of each event (simulating NATS redelivery / relay duplicate publish with new MsgId)
 	for _, env := range envelopes {
 		// Create a message without Nats-Msg-Id dedupe by using a different msg ID header to test inbox dedupe
-		subject, _ := events.SubjectFor(env.TenantID, env.AggregateType, env.EventType)
+		subject, _ := events.SubjectWithPrefix(prefix, env.TenantID, env.AggregateType, env.EventType)
 		payload, _ := json.Marshal(env)
 		dupMsg := nats.NewMsg(subject)
 		dupID, _ := ids.Generate()
@@ -727,78 +811,85 @@ func TestConsumer_EndToEndWalletRelayAndProjectorAppliedTotals(t *testing.T) {
 	nc, js := getNATSConnection(t)
 	defer nc.Close()
 
-	// Locate wallet service URL (default to compose container port 8081)
-	walletURL := os.Getenv("WALLET_TEST_HTTP_URL")
-	if walletURL == "" {
-		walletURL = "http://127.0.0.1:8081"
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
+	natsURL := os.Getenv("NATS_TEST_URL")
+	if natsURL == "" {
+		natsURL = "nats://127.0.0.1:4222"
+	}
+	walletDSN := os.Getenv("WALLET_TEST_DATABASE_URL")
+	if walletDSN == "" {
+		walletDSN = "postgres://wallet_source_role:wallet_source_dev_password@127.0.0.1:5432/wallet_source_test?sslmode=disable"
 	}
 
-	// Check if wallet service is running
+	// Always launch dedicated isolated test wallet instance on ephemeral port
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen ephemeral port: %v", err)
+	}
+	walletAddr := l.Addr().String()
+	_ = l.Close()
+	walletURL := "http://" + walletAddr
+
+	walletCmd := exec.Command("go", "run", "digitalwallet/services/wallet")
+	walletCmd.Env = append(os.Environ(),
+		"SERVICE_NAME=wallet-test",
+		"INSTANCE_NAME=wallet-source-test",
+		"HTTP_ADDR="+walletAddr,
+		"DATABASE_URL="+walletDSN,
+		"NATS_URL="+natsURL,
+		"NATS_STREAM="+stream,
+		"NATS_SUBJECT_PREFIX="+prefix,
+		"LOG_LEVEL=error",
+	)
+	if err := walletCmd.Start(); err != nil {
+		t.Skipf("cannot start wallet service: %v", err)
+	}
+	defer func() {
+		if walletCmd.Process != nil {
+			_ = walletCmd.Process.Kill()
+		}
+	}()
+
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(walletURL + "/healthz")
-	var walletCmd *exec.Cmd
-	if err != nil || resp.StatusCode != http.StatusOK {
-		// Start wallet process locally if not running in Compose
-		walletDSN := os.Getenv("WALLET_TEST_DATABASE_URL")
-		if walletDSN == "" {
-			walletDSN = "postgres://wallet_source_role:wallet_source_dev_password@127.0.0.1:5432/wallet_source?sslmode=disable"
+	// Wait for wallet ready
+	ready := false
+	for i := 0; i < 40; i++ {
+		time.Sleep(200 * time.Millisecond)
+		r, err := client.Get(walletURL + "/healthz")
+		if err == nil && r.StatusCode == http.StatusOK {
+			ready = true
+			_ = r.Body.Close()
+			break
 		}
-		natsURL := os.Getenv("NATS_TEST_URL")
-		if natsURL == "" {
-			natsURL = "nats://127.0.0.1:4222"
-		}
-		port := "8089"
-		walletURL = "http://127.0.0.1:" + port
-
-		walletCmd = exec.Command("go", "run", "../../wallet/main.go")
-		walletCmd.Env = append(os.Environ(),
-			"SERVICE_NAME=wallet",
-			"INSTANCE_NAME=wallet-source-test",
-			"HTTP_ADDR=:"+port,
-			"DATABASE_URL="+walletDSN,
-			"NATS_URL="+natsURL,
-			"LOG_LEVEL=error",
-		)
-		if err := walletCmd.Start(); err != nil {
-			t.Skipf("cannot start wallet service: %v", err)
-		}
-		defer func() {
-			if walletCmd.Process != nil {
-				_ = walletCmd.Process.Kill()
-			}
-		}()
-
-		// Wait for wallet ready
-		ready := false
-		for i := 0; i < 30; i++ {
-			time.Sleep(200 * time.Millisecond)
-			r, err := client.Get(walletURL + "/healthz")
-			if err == nil && r.StatusCode == http.StatusOK {
-				ready = true
-				_ = r.Body.Close()
-				break
-			}
-		}
-		if !ready {
-			t.Skip("wallet service failed to start within 6s")
-		}
-	} else {
-		_ = resp.Body.Close()
+	}
+	if !ready {
+		t.Fatal("wallet service failed to start within 8s")
 	}
 
-	// Ensure projector pull consumer is running on consumerName "projector"
-	consumerName := "projector"
-	cfg := consumer.DefaultConsumerConfig("WALLET_EVENTS", consumerName)
-	if _, err := js.AddConsumer("WALLET_EVENTS", &cfg); err != nil && !errors.Is(err, nats.ErrConsumerNameAlreadyInUse) {
+	ids := identifiers.NewGenerator()
+	tenantID, _ := ids.Generate()
+	tIDStr := tenantID.String()
+	t.Cleanup(func() {
+		cleanTenantWalletData(t, tenantID)
+		cleanTenantReadData(t, tenantID)
+	})
+
+	consumerName := "projector_test_" + tIDStr
+	cfg := consumer.DefaultConsumerConfigWithPrefix(stream, consumerName, prefix)
+	cfg.FilterSubject = prefix + "." + tIDStr + ".>"
+	if _, err := js.AddConsumer(stream, &cfg); err != nil && !errors.Is(err, nats.ErrConsumerNameAlreadyInUse) {
 		t.Fatalf("add consumer: %v", err)
 	}
-	sub, err := js.PullSubscribe("events.>", consumerName, nats.Bind("WALLET_EVENTS", consumerName))
+	t.Cleanup(func() { _ = js.DeleteConsumer(stream, consumerName) })
+
+	sub, err := js.PullSubscribe(cfg.FilterSubject, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe: %v", err)
 	}
 
 	runner := consumer.NewRunner(testReadDB, sub, nil, consumer.RunnerConfig{
-		StreamName:   "WALLET_EVENTS",
+		StreamName:   stream,
 		ConsumerName: consumerName,
 		BatchSize:    10,
 		FetchTimeout: 200 * time.Millisecond,
@@ -808,10 +899,6 @@ func TestConsumer_EndToEndWalletRelayAndProjectorAppliedTotals(t *testing.T) {
 	go func() { _ = runner.Run(rCtx) }()
 
 	// Execute end-to-end wallet operations via HTTP API:
-	ids := identifiers.NewGenerator()
-	tenantID, _ := ids.Generate()
-	tIDStr := tenantID.String()
-
 	// 1. Create Wallet (emits wallet.created version 1)
 	createReq, _ := json.Marshal(map[string]string{"external_reference": "e2e-ref-" + tIDStr})
 	req, _ := http.NewRequestWithContext(context.Background(), "POST", walletURL+"/v1/wallets", bytes.NewReader(createReq))
@@ -862,11 +949,7 @@ func TestConsumer_EndToEndWalletRelayAndProjectorAppliedTotals(t *testing.T) {
 	}
 	_ = withResp.Body.Close()
 
-	// Connect to wallet_source DB to query journal & events table directly
-	walletDSN := os.Getenv("WALLET_TEST_DATABASE_URL")
-	if walletDSN == "" {
-		walletDSN = "postgres://wallet_source_role:wallet_source_dev_password@127.0.0.1:5432/wallet_source?sslmode=disable"
-	}
+	// Connect to wallet_source_test DB to query journal & events table directly
 	walletDB, err := sql.Open("pgx", walletDSN)
 	if err != nil {
 		t.Fatalf("connect wallet db: %v", err)
@@ -874,7 +957,7 @@ func TestConsumer_EndToEndWalletRelayAndProjectorAppliedTotals(t *testing.T) {
 	defer walletDB.Close()
 
 	ctx := context.Background()
-	// Count journal transactions / events in wallet_source DB for this tenant
+	// Count journal transactions / events in wallet_source_test DB for this tenant
 	var walletEventCount int
 	err = walletDB.QueryRowContext(ctx, "SELECT count(*) FROM events WHERE tenant_id = $1", tenantID).Scan(&walletEventCount)
 	if err != nil {

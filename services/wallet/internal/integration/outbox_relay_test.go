@@ -15,6 +15,7 @@ import (
 	"digitalwallet/services/wallet/internal/relay"
 	"digitalwallet/services/wallet/internal/repository"
 	"digitalwallet/shared/identifiers"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 )
 
@@ -133,6 +134,41 @@ func (p *tcpProxy) handleConn(src net.Conn) {
 	<-done
 }
 
+func testStreamName() string {
+	if s := os.Getenv("NATS_TEST_STREAM"); s != "" {
+		return s
+	}
+	return relay.WalletEventsStream
+}
+
+func testSubjectPrefix() string {
+	if p := os.Getenv("NATS_TEST_SUBJECT_PREFIX"); p != "" {
+		return p
+	}
+	return "events"
+}
+
+func cleanTenantOutbox(t *testing.T, tenantID identifiers.UUID) {
+	t.Helper()
+	dsn := os.Getenv("WALLET_TEST_MIGRATOR_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_source_test?sslmode=disable"
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		return
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = pool.Exec(ctx, "DELETE FROM outbox_messages WHERE tenant_id = $1", tenantID)
+	_, _ = pool.Exec(ctx, "DELETE FROM events WHERE tenant_id = $1", tenantID)
+	_, _ = pool.Exec(ctx, "DELETE FROM journal_postings WHERE tenant_id = $1", tenantID)
+	_, _ = pool.Exec(ctx, "DELETE FROM journal_transactions WHERE tenant_id = $1", tenantID)
+	_, _ = pool.Exec(ctx, "DELETE FROM accounts WHERE tenant_id = $1", tenantID)
+	_, _ = pool.Exec(ctx, "DELETE FROM wallets WHERE tenant_id = $1", tenantID)
+}
+
 func getNATSConnection(t *testing.T) (*nats.Conn, nats.JetStreamContext) {
 	t.Helper()
 	natsURL := os.Getenv("NATS_TEST_URL")
@@ -148,7 +184,7 @@ func getNATSConnection(t *testing.T) (*nats.Conn, nats.JetStreamContext) {
 		nc.Close()
 		t.Skipf("cannot create JetStream context: %v", err)
 	}
-	if _, err := relay.BootstrapWalletEvents(js); err != nil {
+	if _, err := relay.BootstrapWalletEventsWithPrefix(js, testStreamName(), testSubjectPrefix()); err != nil {
 		nc.Close()
 		t.Fatalf("bootstrap wallet events stream: %v", err)
 	}
@@ -157,19 +193,22 @@ func getNATSConnection(t *testing.T) (*nats.Conn, nats.JetStreamContext) {
 
 func countMessagesForTenant(t *testing.T, js nats.JetStreamContext, tenantID identifiers.UUID) int {
 	t.Helper()
+	stream := testStreamName()
+	prefix := testSubjectPrefix()
 	consumerName := "count_" + tenantID.String()
+	filter := prefix + "." + tenantID.String() + ".>"
 	cfg := &nats.ConsumerConfig{
 		Durable:       consumerName,
 		DeliverPolicy: nats.DeliverAllPolicy,
 		AckPolicy:     nats.AckExplicitPolicy,
-		FilterSubject: "events." + tenantID.String() + ".>",
+		FilterSubject: filter,
 	}
-	_, err := js.AddConsumer(relay.WalletEventsStream, cfg)
+	_, err := js.AddConsumer(stream, cfg)
 	if err != nil {
 		t.Fatalf("add count consumer: %v", err)
 	}
-	defer func() { _ = js.DeleteConsumer(relay.WalletEventsStream, consumerName) }()
-	sub, err := js.PullSubscribe("events."+tenantID.String()+".>", consumerName, nats.Bind(relay.WalletEventsStream, consumerName))
+	defer func() { _ = js.DeleteConsumer(stream, consumerName) }()
+	sub, err := js.PullSubscribe(filter, consumerName, nats.Bind(stream, consumerName))
 	if err != nil {
 		t.Fatalf("pull subscribe: %v", err)
 	}
@@ -219,6 +258,7 @@ func TestRelay_CommitSucceedsWhileNATSStoppedAndPublishesOnceAfterRestart(t *tes
 	defer cancel()
 
 	tenantID, _ := identifiers.NewGenerator().Generate()
+	t.Cleanup(func() { cleanTenantOutbox(t, tenantID) })
 	walletReq := struct {
 		ExternalReference string `json:"external_reference"`
 	}{ExternalReference: "key-1"}
@@ -259,6 +299,7 @@ func TestRelay_CommitSucceedsWhileNATSStoppedAndPublishesOnceAfterRestart(t *tes
 		PublishTimeout: 200 * time.Millisecond,
 		BaseBackoff:    50 * time.Millisecond,
 		MaxBackoff:     200 * time.Millisecond,
+		SubjectPrefix:  testSubjectPrefix(),
 	})
 	go func() { _ = r.Run(relayCtx) }()
 
@@ -308,6 +349,7 @@ func TestRelay_CrashAfterPublishDeduplicatedInStream(t *testing.T) {
 	_, _ = testPool.Exec(ctx, "UPDATE outbox_messages SET published_at = now() WHERE published_at IS NULL")
 
 	tenantID, _ := identifiers.NewGenerator().Generate()
+	t.Cleanup(func() { cleanTenantOutbox(t, tenantID) })
 	walletReq := struct {
 		ExternalReference string `json:"external_reference"`
 	}{ExternalReference: "key-crash"}
@@ -324,6 +366,7 @@ func TestRelay_CrashAfterPublishDeduplicatedInStream(t *testing.T) {
 		PollInterval:   50 * time.Millisecond,
 		LeaseDuration:  1 * time.Second, // short lease so it expires quickly
 		PublishTimeout: time.Second,
+		SubjectPrefix:  testSubjectPrefix(),
 	}, func(msg relay.OutboxMessage) error {
 		crashed.Store(true)
 		return errors.New("simulated crash after publish")
@@ -369,6 +412,7 @@ func TestRelay_CrashAfterPublishDeduplicatedInStream(t *testing.T) {
 		PollInterval:   50 * time.Millisecond,
 		LeaseDuration:  2 * time.Second,
 		PublishTimeout: time.Second,
+		SubjectPrefix:  testSubjectPrefix(),
 	})
 
 	normCtx, normCancel := context.WithCancel(context.Background())
@@ -412,6 +456,7 @@ func TestRelay_ConcurrentRelaysPublishAllRowsWithoutDoubleClaim(t *testing.T) {
 	// Create 10 wallets, producing 10 outbox messages
 	for i := 0; i < 10; i++ {
 		tenantID, _ := identifiers.NewGenerator().Generate()
+		t.Cleanup(func() { cleanTenantOutbox(t, tenantID) })
 		tenantIDs = append(tenantIDs, tenantID)
 		randID, _ := identifiers.NewGenerator().Generate()
 		wReq := struct {
@@ -430,12 +475,14 @@ func TestRelay_ConcurrentRelaysPublishAllRowsWithoutDoubleClaim(t *testing.T) {
 		PollInterval:   20 * time.Millisecond,
 		LeaseDuration:  2 * time.Second,
 		PublishTimeout: time.Second,
+		SubjectPrefix:  testSubjectPrefix(),
 	})
 	relay2 := relay.New(testPool, js, relay.Config{
 		BatchSize:      3,
 		PollInterval:   20 * time.Millisecond,
 		LeaseDuration:  2 * time.Second,
 		PublishTimeout: time.Second,
+		SubjectPrefix:  testSubjectPrefix(),
 	})
 
 	rCtx, rCancel := context.WithCancel(context.Background())

@@ -57,7 +57,7 @@ func (f *fakeConsumerManager) ConsumerInfo(stream, name string, _ ...nats.JSOpt)
 
 func TestBootstrapConsumerIsIdempotentAndReconciles(t *testing.T) {
 	mgr := &fakeConsumerManager{}
-	info, err := bootstrap(mgr, "WALLET_EVENTS", "projector")
+	info, err := bootstrap(mgr, "WALLET_EVENTS", "projector", "events")
 	if err != nil {
 		t.Fatalf("first bootstrap error = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestBootstrapConsumerIsIdempotentAndReconciles(t *testing.T) {
 	}
 
 	// Second run: no extra creates or updates
-	_, err = bootstrap(mgr, "WALLET_EVENTS", "projector")
+	_, err = bootstrap(mgr, "WALLET_EVENTS", "projector", "events")
 	if err != nil {
 		t.Fatalf("second bootstrap error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestBootstrapConsumerIsIdempotentAndReconciles(t *testing.T) {
 
 	// Configuration drift trigger update
 	mgr.consumerInfo.Config.AckWait = 5 * time.Second
-	_, err = bootstrap(mgr, "WALLET_EVENTS", "projector")
+	_, err = bootstrap(mgr, "WALLET_EVENTS", "projector", "events")
 	if err != nil {
 		t.Fatalf("reconcile bootstrap error = %v", err)
 	}

@@ -53,6 +53,7 @@ type Config struct {
 	PublishTimeout time.Duration
 	BaseBackoff    time.Duration
 	MaxBackoff     time.Duration
+	SubjectPrefix  string
 	Jitter         JitterFunc
 	Logger         *slog.Logger
 
@@ -240,7 +241,11 @@ func (r *Relay) Stop(ctx context.Context) error {
 }
 
 func (r *Relay) publishOne(ctx context.Context, message OutboxMessage) error {
-	subject, err := events.SubjectFor(message.TenantID, message.AggregateType, message.EventType)
+	prefix := r.config.SubjectPrefix
+	if prefix == "" {
+		prefix = events.SubjectPrefix
+	}
+	subject, err := events.SubjectWithPrefix(prefix, message.TenantID, message.AggregateType, message.EventType)
 	if err == nil {
 		transport := events.Message{Subject: subject, NatsMsgID: message.EventID.String(), Payload: message.Payload}
 		err = transport.Validate()
