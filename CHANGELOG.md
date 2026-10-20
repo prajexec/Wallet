@@ -4,6 +4,30 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [Phase 5 — CQRS projections] — 2026-10-21
+
+### Added
+
+- Added payload-only wallet projection folds for balances and immutable entry history, including aggregate-version watermarks, unknown-event no-op advancement, unsupported-schema rejection, and overflow/negative-balance validation.
+- Added dedicated read-database projection tables with fixed `a`/`b` slots, an atomic `projection_versions` pointer, rebuild metadata, and restricted projector-role grants. Runtime DDL is not used for rebuilds.
+- Added projector read APIs for active-slot balances and keyset-paginated entries. Responses expose `projection_slot`, `read_model_consistent_through`, and `authoritative: false`; balance reads support bounded `min_version`/`wait_ms` read-your-writes waits.
+- Added enriched wallet command/event contracts with `aggregate_version`, authoritative wallet verification pages, and cross-tenant verification support for projection validation.
+- Added `projectorctl` rebuild, status, promote, rollback, retire, and development-only active-slot wipe operations.
+
+### Architecture
+
+- Projector consumers run independently for slots `a` and `b` (`projector-balance-a` and `projector-balance-b`) while public reads resolve the active slot in the same SQL statement as the view query.
+- Rebuilds clear and replay the inactive slot from persisted projector event envelopes, compare candidate balances and versions with wallet verification snapshots, and record `READY`/`FAILED` evidence without repairing mismatches automatically.
+- Wallet source and destination remain the same binary with separate databases and roles; projector code consumes event payloads and never queries wallet databases directly.
+
+### Verification
+
+- `INTERNAL_HTTP_ADDR=127.0.0.1:0 make ci` passed with Mermaid/OpenAPI checks, builds, unit tests, race tests, vet, lint, sqlc freshness, import-boundary checks, live role isolation, and Compose-backed integration tests.
+- Compose end-to-end flow passed after `make up && make migrate`: wallet creation returned `aggregate_version: 1`; a 5,000-minor-unit deposit returned `aggregate_version: 2`; the projector returned balance `5000`, `projection_slot: "a"`, and `read_model_consistent_through: 2`.
+- Read-your-writes passed with `min_version=2`, returning HTTP 200 with watermark `2` and the projected balance `5000`.
+- `projectorctl status` reported `NONE` before the demo rebuild. Rebuild verification targeted inactive slot `b` and returned `READY`; status recorded the rebuild and the active pointer remained `a|b`, proving active reads continued from slot `a` with balance `5000` and watermark `2`.
+- The projector integration suite includes an isolated balance/entry fold test and runs with dedicated test databases, `WALLET_EVENTS_TEST`, and `events-test` subjects.
+
 ## [Phase 4 — Outbox relay and ordered consumption] — 2026-10-20
 
 ### Added

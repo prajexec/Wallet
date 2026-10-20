@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -29,21 +30,21 @@ var (
 func TestMain(m *testing.M) {
 	readDSN := os.Getenv("READ_TEST_DATABASE_URL")
 	if readDSN == "" {
-		readDSN = os.Getenv("READ_DATABASE_URL")
-	}
-	if readDSN == "" {
-		os.Exit(0)
+		_, _ = fmt.Fprintln(os.Stderr, "projector integration tests skipped: READ_TEST_DATABASE_URL is not set")
+		os.Exit(m.Run())
 	}
 
 	db, err := sql.Open("pgx", readDSN)
 	if err != nil {
-		panic(err)
+		_, _ = fmt.Fprintf(os.Stderr, "projector integration tests skipped: open read test database: %v\n", err)
+		os.Exit(m.Run())
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
-		os.Exit(0)
+		_, _ = fmt.Fprintf(os.Stderr, "projector integration tests skipped: ping read test database: %v\n", err)
+		os.Exit(m.Run())
 	}
 	testReadDB = db
 
@@ -959,12 +960,17 @@ func TestConsumer_EndToEndWalletRelayAndProjectorAppliedTotals(t *testing.T) {
 	walletAddr := l.Addr().String()
 	_ = l.Close()
 	walletURL := "http://" + walletAddr
+	internalWalletAddr := os.Getenv("INTERNAL_HTTP_ADDR")
+	if internalWalletAddr == "" {
+		internalWalletAddr = "127.0.0.1:0"
+	}
 
 	walletCmd := exec.Command("go", "run", "digitalwallet/services/wallet")
 	walletCmd.Env = append(os.Environ(),
 		"SERVICE_NAME=wallet-test",
 		"INSTANCE_NAME=wallet-source-test",
 		"HTTP_ADDR="+walletAddr,
+		"INTERNAL_HTTP_ADDR="+internalWalletAddr,
 		"DATABASE_URL="+walletDSN,
 		"NATS_URL="+natsURL,
 		"NATS_STREAM="+stream,
