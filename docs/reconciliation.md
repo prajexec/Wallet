@@ -48,6 +48,16 @@ flowchart TD
     Resolve --> End
 ```
 
+## Edge case: unacknowledged message drop on MaxDeliver crash
+
+When a consumer worker crashes while processing its final allowed delivery attempt (`attempts == MaxDeliver`), JetStream considers delivery attempts exhausted and ceases redelivering the message without an application-level acknowledgment. If the worker process terminates before writing to `dead_letter_events` or `applied_events_log`, the message drops silently from JetStream stream delivery without a consumer dead-letter record.
+
+The scheduled inbox and projection reconciliation sweep detects this scenario:
+
+1. **Detection:** The reconciliation job compares the authoritative wallet aggregate sequence (`MAX(sequence_number) WHERE tenant_id = $1 AND aggregate_id = $2` from the wallet database `events` table) against the projector's `aggregate_cursors.last_applied_sequence` and `applied_events_log`.
+2. **Identification:** If `latest_wallet_sequence > projector_cursor` and no pending row in `buffered_events` or active timer in `ordering_gaps` is resolving within the gap window, the reconciliation job flags an `ORPHANED_STREAM_EVENT` exception.
+3. **Remediation:** The reconciliation job or operator runbook queries the source `events` row by `(tenant_id, aggregate_id, sequence_number)` and re-enqueues or directly republishes the immutable event to the JetStream subject with its original event ID and sequence number. The consumer's inbox deduplication and aggregate advisory locking ensure idempotent processing without double application.
+
 ## Operator runbook
 
 1. Identify the exception and freeze automatic retries for that transfer if needed.

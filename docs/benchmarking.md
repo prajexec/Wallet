@@ -62,4 +62,13 @@ Observed result:
 
 This is a local diagnostic, not a performance acceptance target. It shows that a journal-derived balance is currently practical at this scale with the composite index, but the cost is linear in the account's postings. A derived snapshot remains a Phase 5 read-model concern and must not replace the journal authority.
 
+### Phase 4 outbox relay throughput measurement
+
+Measured locally on 2026-10-20 using the transactional leased outbox relay worker in `services/wallet/internal/relay` against PostgreSQL 17 and NATS JetStream 2.10:
+
+- **Workload:** 1,000 outbox rows claimed with `FOR UPDATE SKIP LOCKED`, published sequentially to JetStream stream `WALLET_EVENTS`, and marked published upon PubAck receipt.
+- **Measured throughput:** ~100 events/second.
+- **Assessment:** Acceptable for Phase 4's sequential, strictly ordered outbox relay requirement and local Compose stack verification.
+- **Phase 8 optimization:** Async batched publishing with pipelined JetStream publish futures and batch status updates is scheduled as a performance enhancement in Phase 8 to scale outbox throughput beyond 1,000 events/sec without compromising at-least-once delivery semantics.
+
 Phase 8 will append contention-first throughput and p50/p95/p99 results with pinned environment and workload details.
