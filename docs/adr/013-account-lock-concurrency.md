@@ -1,6 +1,6 @@
 # ADR 013: Transaction-scoped advisory locking for wallet writes
 
-- **Status:** Superseded by [ADR 018](018-advisory-lock-runtime-isolation.md)
+Status: superseded by ADR-018
 - **Date:** 2026-10-19
 
 ## Context

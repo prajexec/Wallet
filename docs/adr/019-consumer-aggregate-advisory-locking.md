@@ -1,6 +1,6 @@
 # ADR 019: Consumer aggregate advisory locking for ordered projection delivery
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-20
 
 ## Context

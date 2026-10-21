@@ -10,7 +10,8 @@ The HTTP API is JSON over HTTPS in deployed environments. Local development may 
 | `Idempotency-Key` | Mutating public requests | Stable caller operation key. Required for wallet money commands and transfer creation. |
 | `X-Request-ID` | Recommended | Caller-provided trace ID; server generates one if absent. |
 | `X-Correlation-ID` | Internal/recommended | End-to-end transfer correlation. |
-| `X-Require-Consistent-Through` | Read-model reads only | Optional JSON watermark requirement. |
+| `min_version` query parameter | Projector balance reads | Optional minimum aggregate version for bounded read-your-writes behavior. |
+| `wait_ms` query parameter | Projector balance reads | Optional bounded wait, from `0` through `5000` milliseconds, for `min_version`. |
 
 Errors use:
 
@@ -53,7 +54,7 @@ Every request to the internal listener requires the `X-Internal-Token` HTTP head
 
 | Method and path | Purpose | Idempotency / auth |
 | --- | --- | --- |
-| `GET /internal/v1/stats` | Telemetry, outbox backlog, lag, gaps, and dead-letter statistics. | `X-Internal-Token`. |
+| `GET /internal/v1/stats` | Telemetry, outbox backlog, saga retries, lag, gaps, and dead-letter statistics, depending on the service. | `X-Internal-Token`. |
 | `GET /internal/v1/wallets/verify` | Wallet cross-tenant verification scan returning `(wallet_id, currency, posted_balance_minor, as_of_version)` in keyset pages. | `X-Internal-Token`, read-only `REPEATABLE READ` snapshot. |
 | `POST /internal/v1/wallets/{wallet_id}/reservations` | Reserve source funds for a transfer. | `X-Internal-Token`, `transfer_id:reserve`; amount and tenant fingerprinted. |
 | `POST /internal/v1/wallets/{wallet_id}/pending-credits` | Create destination pending credit. | `X-Internal-Token`, `transfer_id:pending-credit`. |

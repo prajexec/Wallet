@@ -1,6 +1,6 @@
 # ADR 011: One local PostgreSQL container with isolated databases
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

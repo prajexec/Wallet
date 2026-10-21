@@ -1,6 +1,6 @@
 # ADR 014: sqlc-generated wallet storage
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

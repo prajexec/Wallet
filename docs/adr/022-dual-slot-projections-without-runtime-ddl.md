@@ -1,6 +1,6 @@
 # ADR 022: Dual-Slot Projections Without Runtime DDL
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-20
 - **Deciders:** Digital Wallet Core Team
 - **Consulted:** Architecture, Database Reliability

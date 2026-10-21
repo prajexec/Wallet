@@ -1,6 +1,6 @@
 # ADR 010: Standard-library HTTP server
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

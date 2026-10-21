@@ -1,6 +1,6 @@
-# ADR 018: Database advisory locking for runtime isolation and aggregate serialization
+# ADR-018: Database advisory locking for runtime isolation and aggregate serialization
 
-- **Status:** Accepted (Supersedes ADR 013)
+Status: accepted
 - **Date:** 2026-10-20
 
 ## Context

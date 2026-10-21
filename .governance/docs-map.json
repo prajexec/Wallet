@@ -1,0 +1,5 @@
+{
+  "status": "docs/project-status.md",
+  "history": "CHANGELOG.md",
+  "adr_index": "docs/adr/README.md"
+}

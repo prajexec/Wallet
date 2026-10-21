@@ -1,6 +1,6 @@
 # Operations
 
-This document is the operational contract for the local foundation, wallet ledger, Phase 4 delivery, and Phase 5 projections. The Compose file, migration targets, role-isolation checks, relay, dual-slot projector, read APIs, verification endpoint, and projectorctl are executable.
+This document is the operational contract for the completed v1 local stack. The Compose file, migration targets, role-isolation checks, wallet relay, dual-slot projector, transfer saga, reconciliation lifecycle, read APIs, operator CLIs, and benchmark harness are executable.
 
 ## Local deployment
 
@@ -63,8 +63,8 @@ Compose supplies the following local values. In another environment, set equival
 | `SERVICE_NAME` | `wallet` | `transfer` | `projector` | Required logical service identity. |
 | `INSTANCE_NAME` | `wallet-source` / `wallet-destination` | `transfer` | `projector` | Required logical instance identity. |
 | `HTTP_ADDR` | `:8080` | `:8080` | `:8080` | Listener address. |
-| `INTERNAL_HTTP_ADDR` | `:8085` | N/A | `:8085` | Isolated internal listener. |
-| `INTERNAL_TOKEN` | local shared token | N/A | local shared token | Required on internal listener requests. |
+| `INTERNAL_HTTP_ADDR` | `:8085` | `:8085` | `:8085` | Isolated internal listener. |
+| `INTERNAL_TOKEN` | local shared token | local shared token | local shared token | Required on internal listener requests. |
 | `DATABASE_URL` | `postgres://.../wallet_source` or `wallet_destination` | `postgres://.../transfer` | `postgres://.../read` | PostgreSQL URL with a service-specific role. |
 | `NATS_URL` | `nats://nats:4222` | `nats://nats:4222` | `nats://nats:4222` | NATS URL; required for readiness. |
 | `LOG_LEVEL` | `info` | `info` | `info` | `debug`, `info`, `warn`, or `error`. |
@@ -132,9 +132,9 @@ The stream contract is:
 | `MaxDeliver` | `5` | Poison-event bound before dead-letter recording. |
 | `MaxAckPending` | `100` | Bounded projector in-flight work. |
 
-The internal stats endpoint is `GET /internal/v1/stats` on wallet and projector services. It reports unpublished outbox count, oldest unpublished age, attempts histogram, buffered-event count, open gaps, and dead-letter count.
+The internal stats endpoint is `GET /internal/v1/stats` on wallet, transfer, and projector services. Wallet/projector stats report outbox or projection health; transfer stats report saga step totals and retry counts.
 
-All `/internal/*` routes are isolated on a dedicated secondary HTTP listener (`INTERNAL_HTTP_ADDR`, default `:8085`), separate from the public traffic listener (`HTTP_ADDR`, default `:8080`). The public listener returns `404 Not Found` for any `/internal/*` request. Access to the internal listener requires an `X-Internal-Token` header, validated using constant-time comparison (`crypto/subtle.ConstantTimeCompare`) against the configured `INTERNAL_TOKEN`; invalid or omitted tokens return `401 Unauthorized`. In Docker Compose, internal ports are published strictly on loopback interfaces (`127.0.0.1:8181:8085` for wallet-source, `127.0.0.1:8182:8085` for wallet-destination, `127.0.0.1:8184:8085` for projector). Prometheus is deferred to Phase 8.
+All `/internal/*` routes are isolated on a dedicated secondary HTTP listener (`INTERNAL_HTTP_ADDR`, default `:8085`), separate from the public traffic listener (`HTTP_ADDR`, default `:8080`). The public listener returns `404 Not Found` for any `/internal/*` request. Access to the internal listener requires an `X-Internal-Token` header, validated using constant-time comparison (`crypto/subtle.ConstantTimeCompare`) against the configured `INTERNAL_TOKEN`; invalid or omitted tokens return `401 Unauthorized`. In Docker Compose, internal ports are published strictly on loopback interfaces (`127.0.0.1:8181:8085` for wallet-source, `127.0.0.1:8182:8085` for wallet-destination, `127.0.0.1:8183:8085` for transfer, and `127.0.0.1:8184:8085` for projector). The current observability surface is the internal stats APIs and benchmark artifacts; a production metrics backend remains future scope.
 
 ## Operator CLIs
 
@@ -158,6 +158,20 @@ All `/internal/*` routes are isolated on a dedicated secondary HTTP listener (`I
 `transferctl reconcile` requires `--url`, `--token`, `--tenant`,
 `--exception`, and `--operator-id`. It never creates a journal adjustment;
 resolution evidence is recorded against the immutable exception lifecycle.
+
+## Phase 8 benchmark harness
+
+The standalone `benchmarks` module exercises the running services through their
+public and internal HTTP contracts:
+
+```text
+make benchmark ARGS="-ops=50 -concurrency=16 -repeats=3"
+```
+
+Use `-workloads=` to select a subset. The six workload names and generated
+results are documented in [`benchmarking.md`](benchmarking.md). Run the local
+stack and migrations before starting a benchmark; benchmark output is diagnostic
+evidence and must not be treated as a production SLO.
 
 ## Troubleshooting rules
 

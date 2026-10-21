@@ -1,6 +1,6 @@
 # ADR 024: Cross-Tenant Internal Verification Endpoint
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-20
 - **Deciders:** Digital Wallet Core Team
 - **Consulted:** Architecture, Security, Compliance

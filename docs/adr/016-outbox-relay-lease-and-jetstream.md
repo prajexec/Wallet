@@ -1,6 +1,6 @@
 # ADR 016: Leased outbox relay and idempotent JetStream bootstrap
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR 021: Payload-Only CQRS Projections and Schema Evolution
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-20
 - **Deciders:** Digital Wallet Core Team
 - **Consulted:** Architecture, Security, Data Engineering

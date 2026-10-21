@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Documentation
+
+- Added a source-grounded product requirements document for the completed v1
+  wallet platform.
+- Added a project-status and acceptance-evidence page plus an indexed ADR
+  catalog.
+- Updated README, API, and operations documentation for the finished transfer,
+  reconciliation, benchmark, and internal-listener surfaces.
+
 ## [Phase 8 — Contention-first benchmarks] — 2026-10-21
 
 ### Added

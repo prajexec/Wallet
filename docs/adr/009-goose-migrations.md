@@ -1,6 +1,6 @@
 # ADR 009: Goose for service migrations
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

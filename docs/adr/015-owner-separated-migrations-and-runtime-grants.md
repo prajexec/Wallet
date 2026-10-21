@@ -1,6 +1,6 @@
 # ADR 015: Owner-separated migrations and minimum runtime grants
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

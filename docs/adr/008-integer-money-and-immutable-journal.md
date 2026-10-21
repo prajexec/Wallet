@@ -1,6 +1,6 @@
 # ADR 008: Integer money and database-enforced journal immutability
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

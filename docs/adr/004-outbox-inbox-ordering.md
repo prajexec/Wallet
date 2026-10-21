@@ -1,6 +1,6 @@
 # ADR 004: Transactional outbox, inbox deduplication, and aggregate ordering
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

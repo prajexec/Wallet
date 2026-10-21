@@ -1,6 +1,6 @@
 # ADR 001: No central ledger
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

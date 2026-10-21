@@ -1,6 +1,6 @@
 # ADR 002: Journal is the only balance source of truth
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

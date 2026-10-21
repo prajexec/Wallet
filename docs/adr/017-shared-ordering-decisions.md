@@ -1,6 +1,6 @@
 # ADR 017: Shared pure ordering decisions, service-owned persistence
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

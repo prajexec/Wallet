@@ -1,6 +1,6 @@
 # ADR 005: Explicit saga failure classification
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

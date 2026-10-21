@@ -1,6 +1,6 @@
 # ADR 012: Duplicate HTTP middleware at service boundaries
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

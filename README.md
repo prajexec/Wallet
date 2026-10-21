@@ -44,6 +44,8 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 
 | Document | Purpose |
 | --- | --- |
+| [Product requirements](docs/product-requirements.md) | Product scope, user journeys, requirements, invariants, and explicit non-goals |
+| [Project status](docs/project-status.md) | Completed phase/tag matrix, verification gate, evidence, and known boundaries |
 | [Architecture](docs/architecture.md) | System context, containers, responsibilities, and ownership |
 | [Ledger invariants](docs/ledger-invariants.md) | Double-entry rules, balance formulas, and safety invariants |
 | [Event model](docs/event-model.md) | Event envelope, catalog, ordering, and deduplication |
@@ -56,7 +58,7 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 | [Testing strategy](docs/testing-strategy.md) | Unit, integration, failure-injection, and state-machine testing |
 | [Benchmarking](docs/benchmarking.md) | Contention-first benchmark plan and result template |
 | [Operations](docs/operations.md) | Local run, environment, migrations, CLIs, and troubleshooting |
-| [ADRs](docs/adr/) | Architecture decision records |
+| [ADRs](docs/adr/README.md) | Indexed architecture decision records |
 
 ## Phase plan
 
@@ -71,11 +73,16 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 
 ## Quickstart
 
-Phase 2 provides a runnable local foundation. From the repository root:
+The completed v1 stack runs locally through Docker Compose. From the repository
+root:
 
 ```text
 make up
 make migrate
+curl http://localhost:8081/readyz
+curl http://localhost:8082/readyz
+curl http://localhost:8083/readyz
+curl http://localhost:8084/readyz
 ```
 
 The service health endpoints are:
@@ -88,6 +95,36 @@ The service health endpoints are:
 | projector | <http://localhost:8084/readyz> |
 
 Stop the local stack with `make down`. The Compose credentials are local-development values only; do not reuse them outside the local stack.
+
+## Verification and benchmarks
+
+Run the full repository gate:
+
+```text
+make ci
+```
+
+Run the Phase 8 benchmark harness against the running stack:
+
+```text
+make benchmark ARGS="-ops=50 -concurrency=16 -repeats=3"
+```
+
+The benchmark command updates [`docs/benchmarking.md`](docs/benchmarking.md)
+and writes machine-readable results to
+[`.ecc/benchmarks/phase8.json`](.ecc/benchmarks/phase8.json). The benchmark
+module is outside the four-module workspace, so its standalone checks are:
+
+```text
+cd benchmarks
+GOWORK=off go test ./...
+GOWORK=off go vet ./...
+```
+
+For a route-level view, start with [`docs/api.md`](docs/api.md). For operating
+the local stack or recovering from an ambiguous transfer, use
+[`docs/operations.md`](docs/operations.md) and
+[`docs/reconciliation.md`](docs/reconciliation.md).
 
 ## Phase 1 acceptance (historical)
 

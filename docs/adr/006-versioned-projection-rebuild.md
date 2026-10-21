@@ -1,6 +1,6 @@
 # ADR 006: Versioned projection rebuild and atomic promotion
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

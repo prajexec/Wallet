@@ -1,6 +1,6 @@
 # ADR 007: Enforced module and database boundaries
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-19
 
 ## Context

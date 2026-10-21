@@ -1,6 +1,6 @@
 # ADR 020: Per-Wallet Consistency Cursor and Read-Your-Writes Consistency
 
-- **Status:** Accepted
+Status: accepted
 - **Date:** 2026-10-20
 - **Deciders:** Digital Wallet Core Team
 - **Consulted:** Architecture, Ledger, Projector Teams
