@@ -13,6 +13,7 @@ CREATE DATABASE wallet_destination OWNER migrator_role;
 CREATE DATABASE wallet_source_test OWNER migrator_role;
 CREATE DATABASE wallet_destination_test OWNER migrator_role;
 CREATE DATABASE transfer OWNER migrator_role;
+CREATE DATABASE transfer_test OWNER migrator_role;
 CREATE DATABASE read OWNER migrator_role;
 CREATE DATABASE read_test OWNER migrator_role;
 
@@ -21,6 +22,7 @@ REVOKE CONNECT ON DATABASE wallet_destination FROM PUBLIC;
 REVOKE CONNECT ON DATABASE wallet_source_test FROM PUBLIC;
 REVOKE CONNECT ON DATABASE wallet_destination_test FROM PUBLIC;
 REVOKE CONNECT ON DATABASE transfer FROM PUBLIC;
+REVOKE CONNECT ON DATABASE transfer_test FROM PUBLIC;
 REVOKE CONNECT ON DATABASE read FROM PUBLIC;
 REVOKE CONNECT ON DATABASE read_test FROM PUBLIC;
 REVOKE TEMP ON DATABASE wallet_source FROM PUBLIC;
@@ -28,6 +30,7 @@ REVOKE TEMP ON DATABASE wallet_destination FROM PUBLIC;
 REVOKE TEMP ON DATABASE wallet_source_test FROM PUBLIC;
 REVOKE TEMP ON DATABASE wallet_destination_test FROM PUBLIC;
 REVOKE TEMP ON DATABASE transfer FROM PUBLIC;
+REVOKE TEMP ON DATABASE transfer_test FROM PUBLIC;
 REVOKE TEMP ON DATABASE read FROM PUBLIC;
 REVOKE TEMP ON DATABASE read_test FROM PUBLIC;
 
@@ -36,17 +39,21 @@ GRANT CONNECT ON DATABASE wallet_destination TO migrator_role;
 GRANT CONNECT ON DATABASE wallet_source_test TO migrator_role;
 GRANT CONNECT ON DATABASE wallet_destination_test TO migrator_role;
 GRANT CONNECT ON DATABASE transfer TO migrator_role;
+GRANT CONNECT ON DATABASE transfer_test TO migrator_role;
 GRANT CONNECT ON DATABASE read TO migrator_role;
 GRANT CONNECT ON DATABASE read_test TO migrator_role;
 GRANT TEMP ON DATABASE wallet_source TO wallet_source_role;
 GRANT TEMP ON DATABASE wallet_destination TO wallet_destination_role;
 GRANT TEMP ON DATABASE wallet_source_test TO wallet_source_role;
 GRANT TEMP ON DATABASE wallet_destination_test TO wallet_destination_role;
+GRANT TEMP ON DATABASE transfer TO transfer_role;
+GRANT TEMP ON DATABASE transfer_test TO transfer_role;
 GRANT CONNECT ON DATABASE wallet_source TO wallet_source_role;
 GRANT CONNECT ON DATABASE wallet_destination TO wallet_destination_role;
 GRANT CONNECT ON DATABASE wallet_source_test TO wallet_source_role;
 GRANT CONNECT ON DATABASE wallet_destination_test TO wallet_destination_role;
 GRANT CONNECT ON DATABASE transfer TO transfer_role;
+GRANT CONNECT ON DATABASE transfer_test TO transfer_role;
 GRANT CONNECT ON DATABASE read TO projector_role;
 GRANT CONNECT ON DATABASE read_test TO projector_role;
 
@@ -77,6 +84,12 @@ GRANT USAGE ON SCHEMA public TO wallet_destination_role;
 REVOKE CREATE ON SCHEMA public FROM wallet_destination_role;
 
 \connect transfer
+ALTER SCHEMA public OWNER TO migrator_role;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO transfer_role;
+REVOKE CREATE ON SCHEMA public FROM transfer_role;
+
+\connect transfer_test
 ALTER SCHEMA public OWNER TO migrator_role;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO transfer_role;

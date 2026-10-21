@@ -4,6 +4,32 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [Phase 6 — Transfer saga and cross-wallet orchestration] — 2026-10-21
+
+### Added
+
+- Added durable transfer saga state machine in `services/transfer/internal/saga` orchestrating multi-phase wallet transfers across source and destination wallets (`CREATED` -> `RESERVED` -> `PENDING_CREDITED` -> `CAPTURED` -> `COMPLETED`).
+- Added internal wallet transfer primitives on `INTERNAL_HTTP_ADDR` guarded by `X-Internal-Token`: reservations, pending credits, captures, finalizations, releases, compensations, and operation status lookup (`/internal/v1/wallets/{wallet_id}/*` and `/internal/v1/operations/{operation_id}`).
+- Added wallet hold tracking (`wallet_holds`) where active reservations deduct available balance (`available = posted - holds`) without polluting double-entry journal postings until capture.
+- Added wallet pending credits (`wallet_pending_credits`) holding incoming transfer funds unspendable until destination finalization.
+- Added wallet double-entry journal capture (`DEBIT user_wallet`, `CREDIT outbound_clearing`) and finalization (`DEBIT inbound_clearing`, `CREDIT user_wallet`), plus idempotent compensation reversals (`DEBIT outbound_clearing`, `CREDIT user_wallet`).
+- Added transfer service HTTP API exposing `POST /v1/transfers` (with `Idempotency-Key` and `X-Tenant-ID` validation, returning HTTP 202 Accepted) and `GET /v1/transfers/{transfer_id}`.
+- Added typed `walletclient` with response classification (`Success`, `Transient`, `Permanent`, `Ambiguous`) preventing premature compensation upon ambiguous timeouts.
+- Added durable reconciliation exception queue (`reconciliation_exceptions`) when step outcomes are ambiguous or timeouts occur.
+- Added comprehensive unit and integration test coverage with `-race -count=1` for transfer saga transitions, wallet hold mechanics, idempotency replay, and failure compensation.
+
+### Architecture
+
+- Transfer service coordinates cross-wallet movement without direct cross-database queries, interacting exclusively through internal token-protected HTTP endpoints on isolated networks.
+- Holds and pending credits remain state-only entries until captured or finalized, maintaining ledger immutability and preventing false balance mutations.
+- Ambiguous outcomes (e.g. timeouts after dispatch) transition transfers to `RECONCILIATION_REQUIRED` and queue operator exceptions rather than triggering blind compensation.
+
+### Verification
+
+- Verified via `make docs-check build test test-race vet lint check-boundaries role-isolation test-integration`.
+- All integration suites passed with `-race -count=1` against real PostgreSQL databases (`wallet_source_test`, `wallet_destination_test`, `transfer_test`, `read_test`).
+- End-to-end live transfer flow executed on Docker Compose stack: source wallet creation, $100 deposit, destination wallet creation, $35 transfer completed by saga, final source balance $65, final destination balance $35, and transfer idempotency replay returned HTTP 202 with `Idempotency-Replayed: true`.
+
 ## [Phase 5 — CQRS projections] — 2026-10-21
 
 ### Added

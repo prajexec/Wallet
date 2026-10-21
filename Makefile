@@ -13,15 +13,17 @@ READ_DATABASE_URL ?= postgres://projector_role:projector_dev_password@127.0.0.1:
 WALLET_SOURCE_TEST_DATABASE_URL ?= postgres://wallet_source_role:wallet_source_dev_password@127.0.0.1:5432/wallet_source_test?sslmode=disable
 WALLET_DESTINATION_TEST_DATABASE_URL ?= postgres://wallet_destination_role:wallet_destination_dev_password@127.0.0.1:5432/wallet_destination_test?sslmode=disable
 READ_TEST_DATABASE_URL ?= postgres://projector_role:projector_dev_password@127.0.0.1:5432/read_test?sslmode=disable
+TRANSFER_TEST_DATABASE_URL ?= postgres://transfer_role:transfer_dev_password@127.0.0.1:5432/transfer_test?sslmode=disable
 WALLET_SOURCE_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_source?sslmode=disable
 WALLET_DESTINATION_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_destination?sslmode=disable
 TRANSFER_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/transfer?sslmode=disable
 READ_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/read?sslmode=disable
 WALLET_SOURCE_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_source_test?sslmode=disable
 WALLET_DESTINATION_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/wallet_destination_test?sslmode=disable
+TRANSFER_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/transfer_test?sslmode=disable
 READ_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/read_test?sslmode=disable
 
-.PHONY: build test test-race vet lint sqlc sqlc-check projectorctl dev-wipe-active-slot up down migrate migrate-test migrate-wallet-source migrate-wallet-destination migrate-wallet-source-test migrate-wallet-destination-test migrate-transfer migrate-read migrate-read-test docs-check check-boundaries role-isolation test-integration ci
+.PHONY: build test test-race vet lint sqlc sqlc-check projectorctl dev-wipe-active-slot up down migrate migrate-test migrate-wallet-source migrate-wallet-destination migrate-wallet-source-test migrate-wallet-destination-test migrate-transfer migrate-transfer-test migrate-read migrate-read-test docs-check check-boundaries role-isolation test-integration ci
 
 build:
 	@set -e; for module in $(GO_MODULES); do (cd $$module && go build ./...); done
@@ -75,13 +77,16 @@ migrate-wallet-destination-test:
 migrate-transfer:
 	$(GOOSE) -dir migrations/transfer postgres "$(TRANSFER_MIGRATOR_DATABASE_URL)" up
 
+migrate-transfer-test:
+	$(GOOSE) -dir migrations/transfer postgres "$(TRANSFER_TEST_MIGRATOR_DATABASE_URL)" up
+
 migrate-read:
 	$(GOOSE) -dir migrations/projector postgres "$(READ_MIGRATOR_DATABASE_URL)" up
 
 migrate-read-test:
 	$(GOOSE) -dir migrations/projector postgres "$(READ_TEST_MIGRATOR_DATABASE_URL)" up
 
-migrate-test: migrate-wallet-source-test migrate-wallet-destination-test migrate-read-test
+migrate-test: migrate-wallet-source-test migrate-wallet-destination-test migrate-transfer-test migrate-read-test
 
 docs-check:
 	./scripts/check-docs.sh
@@ -101,6 +106,7 @@ test-integration:
 	@until $(COMPOSE) exec -T postgres pg_isready -U postgres -d postgres >/dev/null 2>&1; do sleep 1; done
 	$(MAKE) migrate-test
 	(cd services/wallet && WALLET_TEST_DATABASE_URL="$(WALLET_SOURCE_TEST_DATABASE_URL)" WALLET_TEST_MIGRATOR_DATABASE_URL="$(WALLET_SOURCE_TEST_MIGRATOR_DATABASE_URL)" NATS_TEST_URL="nats://127.0.0.1:4222" NATS_TEST_STREAM="WALLET_EVENTS_TEST" NATS_TEST_SUBJECT_PREFIX="events-test" go test -race -count=1 ./internal/integration)
+	(cd services/transfer && TRANSFER_TEST_DATABASE_URL="$(TRANSFER_TEST_DATABASE_URL)" TRANSFER_TEST_MIGRATOR_DATABASE_URL="$(TRANSFER_TEST_MIGRATOR_DATABASE_URL)" go test -race -count=1 ./...)
 	(cd services/projector && READ_TEST_DATABASE_URL="$(READ_TEST_DATABASE_URL)" READ_TEST_MIGRATOR_DATABASE_URL="$(READ_TEST_MIGRATOR_DATABASE_URL)" WALLET_TEST_DATABASE_URL="$(WALLET_SOURCE_TEST_DATABASE_URL)" WALLET_TEST_MIGRATOR_DATABASE_URL="$(WALLET_SOURCE_TEST_MIGRATOR_DATABASE_URL)" NATS_TEST_URL="nats://127.0.0.1:4222" NATS_TEST_STREAM="WALLET_EVENTS_TEST" NATS_TEST_SUBJECT_PREFIX="events-test" go test -race -count=1 ./internal/integration)
 
 ci: docs-check build test test-race vet lint sqlc-check check-boundaries role-isolation test-integration

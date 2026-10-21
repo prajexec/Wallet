@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"digitalwallet/shared/identifiers"
 	"digitalwallet/shared/money"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var clearingAccounts = []string{
@@ -37,6 +39,143 @@ type journalPostedData struct {
 	Side                 string           `json:"side"`
 	EntryType            string           `json:"entry_type"`
 	Reference            string           `json:"reference"`
+}
+
+type transferOperationData struct {
+	WalletID             identifiers.UUID  `json:"wallet_id"`
+	TransferID           identifiers.UUID  `json:"transfer_id"`
+	OperationID          identifiers.UUID  `json:"operation_id"`
+	AmountMinor          int64             `json:"amount_minor"`
+	Currency             money.Currency    `json:"currency"`
+	JournalTransactionID *identifiers.UUID `json:"journal_transaction_id,omitempty"`
+}
+
+type TransferMoneyCommand struct {
+	TransferID        identifiers.UUID
+	AmountMinor       int64
+	Currency          string
+	Reference         string
+	TargetOperationID identifiers.UUID
+}
+
+func (r *Repository) GetOperation(ctx context.Context, tenantID, operationID identifiers.UUID) (OperationResponse, error) {
+	operation, err := walletdb.New(r.pool).GetWalletOperation(ctx, walletdb.GetWalletOperationParams{TenantID: tenantID, OperationID: operationID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OperationResponse{}, ErrNotFound
+	}
+	if err != nil {
+		return OperationResponse{}, err
+	}
+	return OperationResponse{OperationID: operation.OperationID, Status: operation.Status, JournalTransactionID: operation.JournalTransactionID}, nil
+}
+
+func (r *Repository) Reserve(ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command TransferMoneyCommand, requestHash string) (CommandResult, error) {
+	return r.stateOnlyOperation(ctx, tenantID, walletID, operationID, command, requestHash, "RESERVE", "wallet.reservation_created")
+}
+
+func (r *Repository) CreatePendingCredit(ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command TransferMoneyCommand, requestHash string) (CommandResult, error) {
+	return r.stateOnlyOperation(ctx, tenantID, walletID, operationID, command, requestHash, "PENDING_CREDIT", "wallet.pending_credit_created")
+}
+
+func (r *Repository) stateOnlyOperation(ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command TransferMoneyCommand, requestHash, kind, eventType string) (CommandResult, error) {
+	var result CommandResult
+	err := r.withTransaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		q := walletdb.New(tx)
+		if err := validateTransferCommand(operationID, command); err != nil {
+			return err
+		}
+		if err := q.AcquireWalletLock(ctx, walletdb.AcquireWalletLockParams{LockKey: tenantID.String() + ":wallet:" + walletID.String()}); err != nil {
+			return err
+		}
+		wallet, err := q.GetWalletForRead(ctx, walletdb.GetWalletForReadParams{TenantID: tenantID, ID: walletID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if wallet.Status != "ACTIVE" {
+			return ErrWalletClosed
+		}
+		if existing, lookupErr := q.GetWalletOperation(ctx, walletdb.GetWalletOperationParams{TenantID: tenantID, OperationID: operationID}); lookupErr == nil {
+			if existing.RequestHash != requestHash || existing.AmountMinor != command.AmountMinor || existing.TransferID != command.TransferID || existing.WalletID != walletID {
+				return ErrIdempotencyConflict
+			}
+			body, err := json.Marshal(OperationResponse{OperationID: operationID, Status: existing.Status, JournalTransactionID: existing.JournalTransactionID})
+			if err != nil {
+				return err
+			}
+			result = CommandResult{StatusCode: http.StatusOK, Body: body, Replayed: true}
+			return nil
+		} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return lookupErr
+		}
+		if kind == "RESERVE" {
+			balance, err := q.GetWalletBalanceWithVersion(ctx, walletdb.GetWalletBalanceWithVersionParams{TenantID: tenantID, WalletID: walletID, AggregateID: walletID, Currency: currencyUSD})
+			if err != nil {
+				return err
+			}
+			if balance.AvailableBalanceMinor < command.AmountMinor {
+				return ErrInsufficientFunds
+			}
+		}
+		_, err = q.InsertWalletOperation(ctx, walletdb.InsertWalletOperationParams{TenantID: tenantID, OperationID: operationID, WalletID: walletID, TransferID: command.TransferID, OperationKind: kind, RequestHash: requestHash, AmountMinor: command.AmountMinor, Currency: command.Currency, CreatedAt: r.now().UTC()})
+		if err != nil {
+			return mapTransferConstraintError(err)
+		}
+		now := r.now().UTC()
+		var eventData any = transferOperationData{WalletID: walletID, TransferID: command.TransferID, OperationID: operationID, AmountMinor: command.AmountMinor, Currency: money.Currency(command.Currency)}
+		if kind == "RESERVE" {
+			if _, err := q.InsertHold(ctx, walletdb.InsertHoldParams{TenantID: tenantID, HoldOperationID: operationID, WalletID: walletID, TransferID: command.TransferID, AmountMinor: command.AmountMinor, Currency: command.Currency, CreatedAt: now}); err != nil {
+				return mapTransferConstraintError(err)
+			}
+		} else {
+			if _, err := q.InsertPendingCredit(ctx, walletdb.InsertPendingCreditParams{TenantID: tenantID, PendingOperationID: operationID, WalletID: walletID, TransferID: command.TransferID, AmountMinor: command.AmountMinor, Currency: command.Currency, CreatedAt: now}); err != nil {
+				return mapTransferConstraintError(err)
+			}
+		}
+		eventID, version, err := r.appendEvent(ctx, q, tenantID, walletID, eventType, eventData, now)
+		if err != nil {
+			return err
+		}
+		if _, err := q.CompleteWalletOperation(ctx, walletdb.CompleteWalletOperationParams{TenantID: tenantID, OperationID: operationID, EventID: &eventID, UpdatedAt: now}); err != nil {
+			return err
+		}
+		response := OperationResponse{OperationID: operationID, Status: "COMPLETED"}
+		body, err := json.Marshal(response)
+		if err != nil {
+			return err
+		}
+		result = CommandResult{StatusCode: http.StatusOK, Body: body}
+		_ = version
+		return nil
+	})
+	return result, err
+}
+
+func validateTransferCommand(operationID identifiers.UUID, command TransferMoneyCommand) error {
+	if operationID.IsZero() || !operationID.IsV7() {
+		return ErrInvalidOperation
+	}
+	if command.TransferID.IsZero() || !command.TransferID.IsV7() {
+		return ErrInvalidOperation
+	}
+	amount, err := money.NewPositiveUSD(command.AmountMinor)
+	if err != nil {
+		return err
+	}
+	if command.Currency != string(amount.Currency) {
+		return money.ErrInvalidCurrency
+	}
+	return nil
+}
+
+func mapTransferConstraintError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (pgErr.Code == "23505" || pgErr.Code == "23514") {
+		return ErrIdempotencyConflict
+	}
+	return err
 }
 
 func (r *Repository) CreateWallet(ctx context.Context, tenantID identifiers.UUID, key, requestHash, externalReference string) (CommandResult, error) {
@@ -129,11 +268,16 @@ func (r *Repository) postMoney(ctx context.Context, tenantID, walletID identifie
 		if err != nil {
 			return err
 		}
-		balanceMinor, err := q.GetAccountBalance(ctx, walletdb.GetAccountBalanceParams{TenantID: tenantID, AccountID: wallet.AccountID, Currency: currencyUSD})
+		balance, err := q.GetWalletBalanceWithVersion(ctx, walletdb.GetWalletBalanceWithVersionParams{
+			TenantID:    tenantID,
+			WalletID:    walletID,
+			AggregateID: walletID,
+			Currency:    currencyUSD,
+		})
 		if err != nil {
 			return err
 		}
-		if withdrawal && balanceMinor < amountMinor {
+		if withdrawal && balance.AvailableBalanceMinor < amountMinor {
 			return ErrInsufficientFunds
 		}
 		clearingName := "deposit-clearing"
@@ -250,9 +394,9 @@ func (r *Repository) GetBalance(ctx context.Context, tenantID, walletID identifi
 	if err != nil {
 		return BalanceResponse{}, err
 	}
-	bal, err := walletdb.New(r.pool).GetAccountBalanceWithVersion(ctx, walletdb.GetAccountBalanceWithVersionParams{
+	bal, err := walletdb.New(r.pool).GetWalletBalanceWithVersion(ctx, walletdb.GetWalletBalanceWithVersionParams{
 		TenantID:    tenantID,
-		AccountID:   wallet.AccountID,
+		WalletID:    walletID,
 		AggregateID: wallet.WalletID,
 		Currency:    currencyUSD,
 	})
@@ -261,7 +405,7 @@ func (r *Repository) GetBalance(ctx context.Context, tenantID, walletID identifi
 	}
 	return BalanceResponse{
 		WalletID:      walletID,
-		Balance:       Balance{Currency: money.USD, CurrentMinor: bal.PostedBalanceMinor, HeldMinor: 0, AvailableMinor: bal.PostedBalanceMinor},
+		Balance:       Balance{Currency: money.USD, CurrentMinor: bal.PostedBalanceMinor, HeldMinor: bal.HeldBalanceMinor, AvailableMinor: bal.AvailableBalanceMinor},
 		Authoritative: true,
 		AsOfVersion:   bal.AsOfVersion,
 	}, nil

@@ -94,6 +94,9 @@ services:
       HTTP_ADDR: :8080
       DATABASE_URL: postgres://transfer_role:transfer_dev_password@postgres:5432/transfer?sslmode=disable
       NATS_URL: nats://nats:4222
+      WALLET_SOURCE_URL: http://wallet-source:8085
+      WALLET_DESTINATION_URL: http://wallet-destination:8085
+      WALLET_INTERNAL_TOKEN: internal-secret-token
       LOG_LEVEL: info
     ports:
       - "8083:8080"

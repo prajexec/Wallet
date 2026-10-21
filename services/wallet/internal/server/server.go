@@ -48,6 +48,13 @@ type WalletStore interface {
 	Withdraw(context.Context, identifiers.UUID, identifiers.UUID, string, string, int64, string) (repository.CommandResult, error)
 	GetStats(context.Context) (repository.StatsResponse, error)
 	VerifyWallets(context.Context, identifiers.UUID, identifiers.UUID, int32) (repository.WalletVerificationPage, error)
+	Reserve(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error)
+	CreatePendingCredit(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error)
+	Capture(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error)
+	Finalize(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error)
+	Release(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error)
+	Compensate(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error)
+	GetOperation(context.Context, identifiers.UUID, identifiers.UUID) (repository.OperationResponse, error)
 }
 
 // Server owns the HTTP lifecycle and wallet endpoints for one wallet instance.
@@ -114,7 +121,108 @@ func (s *Server) InternalHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /internal/v1/stats", s.stats)
 	mux.HandleFunc("GET /internal/v1/wallets/verify", s.verifyWallets)
+	mux.HandleFunc("POST /internal/v1/wallets/{wallet_id}/reservations", s.reserve)
+	mux.HandleFunc("POST /internal/v1/wallets/{wallet_id}/pending-credits", s.pendingCredit)
+	mux.HandleFunc("POST /internal/v1/wallets/{wallet_id}/captures", s.capture)
+	mux.HandleFunc("POST /internal/v1/wallets/{wallet_id}/finalizations", s.finalize)
+	mux.HandleFunc("POST /internal/v1/wallets/{wallet_id}/releases", s.release)
+	mux.HandleFunc("POST /internal/v1/wallets/{wallet_id}/compensations", s.compensate)
+	mux.HandleFunc("GET /internal/v1/operations/{operation_id}", s.getOperation)
 	return s.withRequestContext(s.requireInternalToken(mux))
+}
+
+func (s *Server) reserve(w http.ResponseWriter, r *http.Request) {
+	s.transferCommand(w, r, func(store WalletStore, ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command repository.TransferMoneyCommand, hash string) (repository.CommandResult, error) {
+		return store.Reserve(ctx, tenantID, walletID, operationID, command, hash)
+	})
+}
+func (s *Server) pendingCredit(w http.ResponseWriter, r *http.Request) {
+	s.transferCommand(w, r, func(store WalletStore, ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command repository.TransferMoneyCommand, hash string) (repository.CommandResult, error) {
+		return store.CreatePendingCredit(ctx, tenantID, walletID, operationID, command, hash)
+	})
+}
+func (s *Server) capture(w http.ResponseWriter, r *http.Request) {
+	s.transferCommand(w, r, func(store WalletStore, ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command repository.TransferMoneyCommand, hash string) (repository.CommandResult, error) {
+		return store.Capture(ctx, tenantID, walletID, operationID, command, hash)
+	})
+}
+func (s *Server) finalize(w http.ResponseWriter, r *http.Request) {
+	s.transferCommand(w, r, func(store WalletStore, ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command repository.TransferMoneyCommand, hash string) (repository.CommandResult, error) {
+		return store.Finalize(ctx, tenantID, walletID, operationID, command, hash)
+	})
+}
+func (s *Server) release(w http.ResponseWriter, r *http.Request) {
+	s.transferCommand(w, r, func(store WalletStore, ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command repository.TransferMoneyCommand, hash string) (repository.CommandResult, error) {
+		return store.Release(ctx, tenantID, walletID, operationID, command, hash)
+	})
+}
+func (s *Server) compensate(w http.ResponseWriter, r *http.Request) {
+	s.transferCommand(w, r, func(store WalletStore, ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command repository.TransferMoneyCommand, hash string) (repository.CommandResult, error) {
+		return store.Compensate(ctx, tenantID, walletID, operationID, command, hash)
+	})
+}
+
+func (s *Server) transferCommand(w http.ResponseWriter, r *http.Request, call func(WalletStore, context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error)) {
+	var request struct {
+		TransferID        identifiers.UUID `json:"transfer_id"`
+		AmountMinor       int64            `json:"amount_minor"`
+		Currency          string           `json:"currency"`
+		Reference         string           `json:"reference"`
+		TargetOperationID identifiers.UUID `json:"target_operation_id"`
+	}
+	if !s.decodeJSON(w, r, &request) {
+		return
+	}
+	tenantID, ok := s.tenantID(w, r)
+	if !ok {
+		return
+	}
+	walletID, ok := pathUUID(w, r, "wallet_id")
+	if !ok {
+		return
+	}
+	operationID, err := identifiers.Parse(r.Header.Get("X-Operation-ID"))
+	if err != nil || operationID.IsZero() || !operationID.IsV7() {
+		s.writeError(w, r, http.StatusUnprocessableEntity, apierrors.CodeValidation, errors.New("X-Operation-ID must be a UUIDv7"), false)
+		return
+	}
+	hash, err := repository.HashRequest(request)
+	if err != nil {
+		s.writeError(w, r, http.StatusUnprocessableEntity, apierrors.CodeValidation, err, false)
+		return
+	}
+	if s.store == nil {
+		s.unavailable(w, r)
+		return
+	}
+	result, err := call(s.store, r.Context(), tenantID, walletID, operationID, repository.TransferMoneyCommand{TransferID: request.TransferID, AmountMinor: request.AmountMinor, Currency: request.Currency, Reference: request.Reference, TargetOperationID: request.TargetOperationID}, hash)
+	if err != nil {
+		s.handleStoreError(w, r, err)
+		return
+	}
+	s.writeCommandResult(w, result)
+}
+
+func (s *Server) getOperation(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := s.tenantID(w, r)
+	if !ok {
+		return
+	}
+	operationID, err := identifiers.Parse(r.PathValue("operation_id"))
+	if err != nil || operationID.IsZero() || !operationID.IsV7() {
+		s.writeError(w, r, http.StatusUnprocessableEntity, apierrors.CodeValidation, errors.New("operation_id must be a UUIDv7"), false)
+		return
+	}
+	if s.store == nil {
+		s.unavailable(w, r)
+		return
+	}
+	response, err := s.store.GetOperation(r.Context(), tenantID, operationID)
+	if err != nil {
+		s.handleStoreError(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) requireInternalToken(next http.Handler) http.Handler {
@@ -526,6 +634,8 @@ func (s *Server) handleStoreError(w http.ResponseWriter, r *http.Request, err er
 		status, code, retryable = http.StatusUnprocessableEntity, apierrors.CodeInsufficientFunds, false
 	case errors.Is(err, repository.ErrWalletClosed):
 		status, code, retryable = http.StatusConflict, "wallet_closed", false
+	case errors.Is(err, repository.ErrInvalidOperation), errors.Is(err, repository.ErrInvalidState):
+		status, code, retryable = http.StatusConflict, "invalid_operation_state", false
 	case errors.Is(err, money.ErrInvalidCurrency), errors.Is(err, money.ErrNonPositive), errors.Is(err, money.ErrOverflow):
 		status, code, retryable = http.StatusUnprocessableEntity, apierrors.CodeValidation, false
 	}

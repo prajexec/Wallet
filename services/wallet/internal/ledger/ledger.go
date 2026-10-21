@@ -13,6 +13,9 @@ import (
 const (
 	OperationDeposit    = "DEPOSIT"
 	OperationWithdrawal = "WITHDRAWAL"
+	OperationCapture    = "CAPTURE"
+	OperationFinalize   = "FINALIZE"
+	OperationCompensate = "COMPENSATE"
 	Debit               = "DEBIT"
 	Credit              = "CREDIT"
 	EntryWallet         = "wallet"
@@ -75,9 +78,59 @@ func Withdrawal(amount money.Money, walletAccountID, clearingAccountID identifie
 	}, nil
 }
 
+func Capture(amount money.Money, walletAccountID, clearingAccountID, transferID identifiers.UUID, externalReference string) (JournalEntry, error) {
+	if err := amount.ValidatePositive(); err != nil {
+		return JournalEntry{}, err
+	}
+	return JournalEntry{
+		OperationType:     OperationCapture,
+		ExternalReference: externalReference,
+		Postings: []Posting{
+			{AccountID: walletAccountID, Side: Debit, Amount: amount, EntryType: EntryWallet, TransferID: &transferID},
+			{AccountID: clearingAccountID, Side: Credit, Amount: amount, EntryType: EntryClearing, TransferID: &transferID},
+		},
+	}, nil
+}
+
+func Finalize(amount money.Money, walletAccountID, clearingAccountID, transferID identifiers.UUID, externalReference string) (JournalEntry, error) {
+	if err := amount.ValidatePositive(); err != nil {
+		return JournalEntry{}, err
+	}
+	return JournalEntry{
+		OperationType:     OperationFinalize,
+		ExternalReference: externalReference,
+		Postings: []Posting{
+			{AccountID: clearingAccountID, Side: Debit, Amount: amount, EntryType: EntryClearing, TransferID: &transferID},
+			{AccountID: walletAccountID, Side: Credit, Amount: amount, EntryType: EntryWallet, TransferID: &transferID},
+		},
+	}, nil
+}
+
+func Compensate(amount money.Money, walletAccountID, clearingAccountID, transferID identifiers.UUID, originalOperation string, externalReference string) (JournalEntry, error) {
+	if err := amount.ValidatePositive(); err != nil {
+		return JournalEntry{}, err
+	}
+	entry := JournalEntry{OperationType: OperationCompensate, ExternalReference: externalReference}
+	if originalOperation == OperationCapture {
+		entry.Postings = []Posting{
+			{AccountID: clearingAccountID, Side: Debit, Amount: amount, EntryType: EntryClearing, TransferID: &transferID},
+			{AccountID: walletAccountID, Side: Credit, Amount: amount, EntryType: EntryWallet, TransferID: &transferID},
+		}
+	} else if originalOperation == OperationFinalize {
+		entry.Postings = []Posting{
+			{AccountID: walletAccountID, Side: Debit, Amount: amount, EntryType: EntryWallet, TransferID: &transferID},
+			{AccountID: clearingAccountID, Side: Credit, Amount: amount, EntryType: EntryClearing, TransferID: &transferID},
+		}
+	} else {
+		return JournalEntry{}, fmt.Errorf("%w: cannot compensate %q", ErrUnsupportedCommand, originalOperation)
+	}
+	return entry, nil
+}
+
 // Validate checks the double-entry and posting-level invariants.
 func (entry JournalEntry) Validate() error {
-	if entry.OperationType != OperationDeposit && entry.OperationType != OperationWithdrawal {
+	if entry.OperationType != OperationDeposit && entry.OperationType != OperationWithdrawal &&
+		entry.OperationType != OperationCapture && entry.OperationType != OperationFinalize && entry.OperationType != OperationCompensate {
 		return fmt.Errorf("%w: operation type %q", ErrUnsupportedCommand, entry.OperationType)
 	}
 	if len(entry.Postings) < 2 {

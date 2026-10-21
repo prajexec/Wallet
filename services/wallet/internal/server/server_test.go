@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,27 @@ func (f fakeWalletStore) VerifyWallets(context.Context, identifiers.UUID, identi
 		return repository.WalletVerificationPage{Wallets: []repository.WalletVerificationRow{}}, nil
 	}
 	return f.verifyPage, nil
+}
+func (f fakeWalletStore) Reserve(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error) {
+	return repository.CommandResult{StatusCode: http.StatusCreated, Body: []byte(`{"status":"RESERVED"}`)}, nil
+}
+func (f fakeWalletStore) CreatePendingCredit(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error) {
+	return repository.CommandResult{StatusCode: http.StatusCreated, Body: []byte(`{"status":"PENDING"}`)}, nil
+}
+func (f fakeWalletStore) Capture(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error) {
+	return repository.CommandResult{StatusCode: http.StatusCreated, Body: []byte(`{"status":"CAPTURED"}`)}, nil
+}
+func (f fakeWalletStore) Finalize(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error) {
+	return repository.CommandResult{StatusCode: http.StatusCreated, Body: []byte(`{"status":"FINALIZED"}`)}, nil
+}
+func (f fakeWalletStore) Release(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error) {
+	return repository.CommandResult{StatusCode: http.StatusCreated, Body: []byte(`{"status":"RELEASED"}`)}, nil
+}
+func (f fakeWalletStore) Compensate(context.Context, identifiers.UUID, identifiers.UUID, identifiers.UUID, repository.TransferMoneyCommand, string) (repository.CommandResult, error) {
+	return repository.CommandResult{StatusCode: http.StatusCreated, Body: []byte(`{"status":"COMPENSATED"}`)}, nil
+}
+func (f fakeWalletStore) GetOperation(context.Context, identifiers.UUID, identifiers.UUID) (repository.OperationResponse, error) {
+	return repository.OperationResponse{}, nil
 }
 
 func TestHealthEndpointsAndRequestHeaders(t *testing.T) {
@@ -225,5 +247,70 @@ func TestVerifyWalletsEndpointRequiresPairedCursorAndReturnsPage(t *testing.T) {
 	}
 	if len(page.Wallets) != 1 || page.Wallets[0].PostedBalanceMinor != 12 || page.Wallets[0].AsOfVersion != 2 {
 		t.Fatalf("verification page = %+v", page)
+	}
+}
+
+func TestInternalTransferEndpoints(t *testing.T) {
+	cfg := config.Config{
+		HTTPAddr:         ":8080",
+		InternalHTTPAddr: ":8085",
+		InternalToken:    "test-secret-token",
+		HealthTimeout:    time.Second,
+	}
+	tenantID := identifiers.MustParse("0192f4b7-6d92-7a4d-8cb5-1b3f9d8f1111")
+	walletID := identifiers.MustParse("0192f4b7-6d92-7a4d-8cb5-1b3f9d8f2222")
+	opID := identifiers.MustParse("0192f4b7-6d92-7a4d-8cb5-1b3f9d8f3333")
+	server := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), identifiers.NewDeterministicGenerator(), Dependencies{}, fakeWalletStore{})
+
+	actions := []string{"reservations", "pending-credits", "captures", "finalizations", "releases", "compensations"}
+	for _, action := range actions {
+		path := "/internal/v1/wallets/" + walletID.String() + "/" + action
+
+		// Public listener must return 404
+		pubReq := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"transfer_id":"0192f4b7-6d92-7a4d-8cb5-1b3f9d8f4444","amount_minor":100,"currency":"USD"}`))
+		pubRec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(pubRec, pubReq)
+		if pubRec.Code != http.StatusNotFound {
+			t.Errorf("action %s on public listener got %d, want 404", action, pubRec.Code)
+		}
+
+		// Internal listener without token returns 401
+		noTokReq := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"transfer_id":"0192f4b7-6d92-7a4d-8cb5-1b3f9d8f4444","amount_minor":100,"currency":"USD"}`))
+		noTokRec := httptest.NewRecorder()
+		server.InternalHandler().ServeHTTP(noTokRec, noTokReq)
+		if noTokRec.Code != http.StatusUnauthorized {
+			t.Errorf("action %s without token got %d, want 401", action, noTokRec.Code)
+		}
+
+		// Internal listener without X-Operation-ID returns 422
+		noOpReq := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"transfer_id":"0192f4b7-6d92-7a4d-8cb5-1b3f9d8f4444","amount_minor":100,"currency":"USD"}`))
+		noOpReq.Header.Set("X-Internal-Token", cfg.InternalToken)
+		noOpReq.Header.Set("X-Tenant-ID", tenantID.String())
+		noOpRec := httptest.NewRecorder()
+		server.InternalHandler().ServeHTTP(noOpRec, noOpReq)
+		if noOpRec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("action %s without X-Operation-ID got %d, want 422", action, noOpRec.Code)
+		}
+
+		// Valid request returns 201
+		validReq := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"transfer_id":"0192f4b7-6d92-7a4d-8cb5-1b3f9d8f4444","amount_minor":100,"currency":"USD"}`))
+		validReq.Header.Set("X-Internal-Token", cfg.InternalToken)
+		validReq.Header.Set("X-Tenant-ID", tenantID.String())
+		validReq.Header.Set("X-Operation-ID", opID.String())
+		validRec := httptest.NewRecorder()
+		server.InternalHandler().ServeHTTP(validRec, validReq)
+		if validRec.Code != http.StatusCreated {
+			t.Errorf("action %s valid request got %d, want 201; body = %s", action, validRec.Code, validRec.Body.String())
+		}
+	}
+
+	// Test GET /internal/v1/operations/{operation_id}
+	getOpReq := httptest.NewRequest(http.MethodGet, "/internal/v1/operations/"+opID.String(), nil)
+	getOpReq.Header.Set("X-Internal-Token", cfg.InternalToken)
+	getOpReq.Header.Set("X-Tenant-ID", tenantID.String())
+	getOpRec := httptest.NewRecorder()
+	server.InternalHandler().ServeHTTP(getOpRec, getOpReq)
+	if getOpRec.Code != http.StatusOK {
+		t.Errorf("get operation got %d, want 200; body = %s", getOpRec.Code, getOpRec.Body.String())
 	}
 }

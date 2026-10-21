@@ -31,6 +31,8 @@ var (
 	ErrIdempotencyProgress = errors.New("idempotency request is already in progress")
 	ErrWalletClosed        = errors.New("wallet is closed")
 	ErrInsufficientFunds   = ledger.ErrInsufficientFunds
+	ErrInvalidOperation    = errors.New("invalid wallet operation")
+	ErrInvalidState        = errors.New("invalid wallet operation state")
 )
 
 type Repository struct {
@@ -77,6 +79,12 @@ type JournalCommandResponse struct {
 	AmountMinor          int64            `json:"amount_minor"`
 	Currency             money.Currency   `json:"currency"`
 	AggregateVersion     int64            `json:"aggregate_version"`
+}
+
+type OperationResponse struct {
+	OperationID          identifiers.UUID  `json:"operation_id"`
+	Status               string            `json:"status"`
+	JournalTransactionID *identifiers.UUID `json:"journal_transaction_id,omitempty"`
 }
 
 type WalletVerificationRow struct {

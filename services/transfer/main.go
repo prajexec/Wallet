@@ -11,7 +11,10 @@ import (
 	"syscall"
 
 	"digitalwallet/services/transfer/internal/config"
+	"digitalwallet/services/transfer/internal/repository"
+	"digitalwallet/services/transfer/internal/saga"
 	"digitalwallet/services/transfer/internal/server"
+	"digitalwallet/services/transfer/internal/walletclient"
 	"digitalwallet/shared/identifiers"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nats-io/nats.go"
@@ -37,10 +40,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer natsConnection.Close()
-	httpServer := server.New(cfg, logger, identifiers.NewGenerator(), server.Dependencies{
+	ids := identifiers.NewGenerator()
+	store := repository.New(database, ids)
+	sagaService := saga.New(store, walletclient.New(cfg.WalletSourceURL, cfg.WalletInternalToken, walletclient.TimeoutClient(cfg.StepTimeout)), walletclient.New(cfg.WalletDestinationURL, cfg.WalletInternalToken, walletclient.TimeoutClient(cfg.StepTimeout)), cfg.MaxAttempts, cfg.StepTimeout)
+	httpServer := server.New(cfg, logger, ids, server.Dependencies{
 		Postgres: database.PingContext,
 		NATS:     func(context.Context) error { return natsConnection.FlushTimeout(cfg.HealthTimeout) },
-	})
+		StartTransfer: func(ctx context.Context, tenantID, transferID identifiers.UUID) {
+			if err := sagaService.Run(ctx, tenantID, transferID); err != nil {
+				logger.Error("transfer saga stopped", "transfer_id", transferID, "error", err)
+			}
+		},
+	}, store)
 	rootContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	errCh := make(chan error, 1)

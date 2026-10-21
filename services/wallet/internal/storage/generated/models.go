@@ -83,3 +83,44 @@ type Wallet struct {
 	Status    string           `db:"status"`
 	CreatedAt time.Time        `db:"created_at"`
 }
+
+type WalletHold struct {
+	TenantID        identifiers.UUID `db:"tenant_id"`
+	HoldOperationID identifiers.UUID `db:"hold_operation_id"`
+	WalletID        identifiers.UUID `db:"wallet_id"`
+	TransferID      identifiers.UUID `db:"transfer_id"`
+	AmountMinor     int64            `db:"amount_minor"`
+	Currency        string           `db:"currency"`
+	Status          string           `db:"status"`
+	CreatedAt       time.Time        `db:"created_at"`
+	UpdatedAt       time.Time        `db:"updated_at"`
+}
+
+type WalletOperation struct {
+	TenantID             identifiers.UUID  `db:"tenant_id"`
+	OperationID          identifiers.UUID  `db:"operation_id"`
+	WalletID             identifiers.UUID  `db:"wallet_id"`
+	TransferID           identifiers.UUID  `db:"transfer_id"`
+	OperationKind        string            `db:"operation_kind"`
+	TargetOperationID    *identifiers.UUID `db:"target_operation_id"`
+	RequestHash          string            `db:"request_hash"`
+	AmountMinor          int64             `db:"amount_minor"`
+	Currency             string            `db:"currency"`
+	Status               string            `db:"status"`
+	JournalTransactionID *identifiers.UUID `db:"journal_transaction_id"`
+	EventID              *identifiers.UUID `db:"event_id"`
+	CreatedAt            time.Time         `db:"created_at"`
+	UpdatedAt            time.Time         `db:"updated_at"`
+}
+
+type WalletPendingCredit struct {
+	TenantID           identifiers.UUID `db:"tenant_id"`
+	PendingOperationID identifiers.UUID `db:"pending_operation_id"`
+	WalletID           identifiers.UUID `db:"wallet_id"`
+	TransferID         identifiers.UUID `db:"transfer_id"`
+	AmountMinor        int64            `db:"amount_minor"`
+	Currency           string           `db:"currency"`
+	Status             string           `db:"status"`
+	CreatedAt          time.Time        `db:"created_at"`
+	UpdatedAt          time.Time        `db:"updated_at"`
+}
