@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -31,6 +32,15 @@ type Store interface {
 	Get(context.Context, identifiers.UUID, identifiers.UUID) (repository.Transfer, error)
 }
 
+type ReconciliationStore interface {
+	ListActiveExceptions(context.Context, identifiers.UUID, int) ([]repository.ReconciliationException, error)
+	GetException(context.Context, identifiers.UUID, identifiers.UUID) (repository.ReconciliationException, error)
+	ClaimException(context.Context, identifiers.UUID, identifiers.UUID, string) (repository.ReconciliationException, error)
+	ResolveException(context.Context, identifiers.UUID, identifiers.UUID, string, string, repository.ResolutionAction, repository.ResolutionEvidence) (repository.ReconciliationException, error)
+	AcceptException(context.Context, identifiers.UUID, identifiers.UUID, string, string, repository.ResolutionEvidence) (repository.ReconciliationException, error)
+	ListExceptionNotes(context.Context, identifiers.UUID, identifiers.UUID) ([]repository.ExceptionNote, error)
+}
+
 type Server struct {
 	config       config.Config
 	logger       *slog.Logger
@@ -38,6 +48,7 @@ type Server struct {
 	dependencies Dependencies
 	store        Store
 	http         *http.Server
+	internalHTTP *http.Server
 }
 
 func New(cfg config.Config, logger *slog.Logger, ids identifiers.Generator, dependencies Dependencies, stores ...Store) *Server {
@@ -57,7 +68,205 @@ func New(cfg config.Config, logger *slog.Logger, ids identifiers.Generator, depe
 	mux.HandleFunc("POST /v1/transfers", s.createTransfer)
 	mux.HandleFunc("GET /v1/transfers/{transfer_id}", s.getTransfer)
 	s.http = &http.Server{Addr: cfg.HTTPAddr, Handler: s.middleware(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	s.internalHTTP = &http.Server{Addr: cfg.InternalHTTPAddr, Handler: s.internalHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	return s
+}
+
+func (s *Server) internalHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /internal/v1/reconciliation/exceptions", s.listExceptions)
+	mux.HandleFunc("POST /internal/v1/reconciliation/exceptions/{exception_id}/investigate", s.investigateException)
+	mux.HandleFunc("POST /internal/v1/reconciliation/exceptions/{exception_id}/resolve", s.resolveException)
+	mux.HandleFunc("POST /internal/v1/reconciliation/exceptions/{exception_id}/accept", s.acceptException)
+	mux.HandleFunc("GET /internal/v1/reconciliation/exceptions/{exception_id}/notes", s.exceptionNotes)
+	return s.requireInternalToken(s.middleware(mux))
+}
+
+func (s *Server) requireInternalToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Internal-Token")), []byte(s.config.InternalToken)) != 1 {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid or missing internal token"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) reconciliationStore(w http.ResponseWriter) (ReconciliationStore, bool) {
+	store, ok := s.store.(ReconciliationStore)
+	if !ok {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "reconciliation repository is not configured"})
+	}
+	return store, ok
+}
+
+func tenantFromHeader(w http.ResponseWriter, r *http.Request) (identifiers.UUID, bool) {
+	tenant, err := identifiers.Parse(strings.TrimSpace(r.Header.Get("X-Tenant-ID")))
+	if err != nil || tenant.IsZero() || !tenant.IsV7() {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "X-Tenant-ID must be UUIDv7"})
+		return identifiers.UUID{}, false
+	}
+	return tenant, true
+}
+
+func exceptionID(w http.ResponseWriter, r *http.Request) (identifiers.UUID, bool) {
+	id, err := identifiers.Parse(r.PathValue("exception_id"))
+	if err != nil || id.IsZero() || !id.IsV7() {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "exception_id must be UUIDv7"})
+		return identifiers.UUID{}, false
+	}
+	return id, true
+}
+
+func operatorID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	value := strings.TrimSpace(r.Header.Get("X-Operator-ID"))
+	if value == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "X-Operator-ID is required"})
+		return "", false
+	}
+	return value, true
+}
+
+func (s *Server) listExceptions(w http.ResponseWriter, r *http.Request) {
+	store, ok := s.reconciliationStore(w)
+	if !ok {
+		return
+	}
+	tenant, ok := tenantFromHeader(w, r)
+	if !ok {
+		return
+	}
+	items, err := store.ListActiveExceptions(r.Context(), tenant, 100)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) investigateException(w http.ResponseWriter, r *http.Request) {
+	store, ok := s.reconciliationStore(w)
+	if !ok {
+		return
+	}
+	tenant, ok := tenantFromHeader(w, r)
+	if !ok {
+		return
+	}
+	id, ok := exceptionID(w, r)
+	if !ok {
+		return
+	}
+	owner, ok := operatorID(w, r)
+	if !ok {
+		return
+	}
+	result, err := store.ClaimException(r.Context(), tenant, id, owner)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) resolveException(w http.ResponseWriter, r *http.Request) {
+	store, ok := s.reconciliationStore(w)
+	if !ok {
+		return
+	}
+	tenant, ok := tenantFromHeader(w, r)
+	if !ok {
+		return
+	}
+	id, ok := exceptionID(w, r)
+	if !ok {
+		return
+	}
+	operator, ok := operatorID(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		Action   repository.ResolutionAction   `json:"action"`
+		Evidence repository.ResolutionEvidence `json:"evidence"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+		return
+	}
+	result, err := store.ResolveException(r.Context(), tenant, id, operator, operator, request.Action, request.Evidence)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) acceptException(w http.ResponseWriter, r *http.Request) {
+	store, ok := s.reconciliationStore(w)
+	if !ok {
+		return
+	}
+	tenant, ok := tenantFromHeader(w, r)
+	if !ok {
+		return
+	}
+	id, ok := exceptionID(w, r)
+	if !ok {
+		return
+	}
+	operator, ok := operatorID(w, r)
+	if !ok {
+		return
+	}
+	var request struct {
+		Evidence repository.ResolutionEvidence `json:"evidence"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+		return
+	}
+	result, err := store.AcceptException(r.Context(), tenant, id, operator, operator, request.Evidence)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) exceptionNotes(w http.ResponseWriter, r *http.Request) {
+	store, ok := s.reconciliationStore(w)
+	if !ok {
+		return
+	}
+	tenant, ok := tenantFromHeader(w, r)
+	if !ok {
+		return
+	}
+	id, ok := exceptionID(w, r)
+	if !ok {
+		return
+	}
+	result, err := store.ListExceptionNotes(r.Context(), tenant, id)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) writeStoreError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, repository.ErrNotFound) {
+		status = http.StatusNotFound
+	}
+	if errors.Is(err, repository.ErrConflict) {
+		status = http.StatusConflict
+	}
+	if errors.Is(err, repository.ErrInvalidResolution) {
+		status = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, status, map[string]any{"error": err.Error()})
 }
 
 func (s *Server) createTransfer(w http.ResponseWriter, r *http.Request) {
@@ -141,13 +350,37 @@ func (s *Server) getTransfer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ListenAndServe() error {
-	if err := s.http.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-		return err
+	errCh := make(chan error, 2)
+	go func() {
+		err := s.http.ListenAndServe()
+		if !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+	go func() {
+		err := s.internalHTTP.ListenAndServe()
+		if !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+	var first error
+	for range 2 {
+		if err := <-errCh; err != nil && first == nil {
+			first = err
+			_ = s.http.Close()
+			_ = s.internalHTTP.Close()
+		}
 	}
-	return nil
+	return first
 }
 
-func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
+func (s *Server) Shutdown(ctx context.Context) error {
+	return errors.Join(s.http.Shutdown(ctx), s.internalHTTP.Shutdown(ctx))
+}
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})

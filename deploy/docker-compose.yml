@@ -92,6 +92,8 @@ services:
       SERVICE_NAME: transfer
       INSTANCE_NAME: transfer
       HTTP_ADDR: :8080
+      INTERNAL_HTTP_ADDR: :8085
+      INTERNAL_TOKEN: internal-secret-token
       DATABASE_URL: postgres://transfer_role:transfer_dev_password@postgres:5432/transfer?sslmode=disable
       NATS_URL: nats://nats:4222
       WALLET_SOURCE_URL: http://wallet-source:8085
@@ -100,6 +102,7 @@ services:
       LOG_LEVEL: info
     ports:
       - "8083:8080"
+      - "127.0.0.1:8183:8085"
     depends_on:
       postgres:
         condition: service_healthy

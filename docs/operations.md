@@ -136,14 +136,16 @@ The internal stats endpoint is `GET /internal/v1/stats` on wallet and projector 
 
 All `/internal/*` routes are isolated on a dedicated secondary HTTP listener (`INTERNAL_HTTP_ADDR`, default `:8085`), separate from the public traffic listener (`HTTP_ADDR`, default `:8080`). The public listener returns `404 Not Found` for any `/internal/*` request. Access to the internal listener requires an `X-Internal-Token` header, validated using constant-time comparison (`crypto/subtle.ConstantTimeCompare`) against the configured `INTERNAL_TOKEN`; invalid or omitted tokens return `401 Unauthorized`. In Docker Compose, internal ports are published strictly on loopback interfaces (`127.0.0.1:8181:8085` for wallet-source, `127.0.0.1:8182:8085` for wallet-destination, `127.0.0.1:8184:8085` for projector). Prometheus is deferred to Phase 8.
 
-## Planned CLIs
+## Operator CLIs
 
 | Command | Purpose |
 | --- | --- |
-| `walletctl balance` | Journal-derived authoritative balance. |
-| `walletctl entries` | Inspect immutable journal entries. |
-| `transferctl inspect` | Show saga steps, attempts, operation IDs, and exceptions. |
-| `transferctl reconcile` | Resolve/query an ambiguous operation; no silent adjustment. |
+| `make walletctl` / `bin/walletctl balance` | Journal-derived balance and active holds. |
+| `bin/walletctl entries` | Inspect immutable journal entries. |
+| `bin/walletctl replay` | Verify journal transaction balancing without adjusting rows. |
+| `make transferctl` / `bin/transferctl inspect` | Show saga steps, attempts, operation IDs, and state. |
+| `bin/transferctl exceptions` | List tenant-scoped reconciliation exceptions. |
+| `bin/transferctl reconcile` | Claim and explicitly resolve an exception through the internal listener. |
 | `make projectorctl` | Build the local projectorctl binary (ignored under `bin/`). |
 | `projectorctl rebuild [--auto-promote]` | Clear the inactive slot, replay durable event envelopes, verify, and optionally promote. |
 | `projectorctl status` | Show the latest rebuild state. |
@@ -151,7 +153,11 @@ All `/internal/*` routes are isolated on a dedicated secondary HTTP listener (`I
 | `projectorctl rollback` | Atomically point to the retained previous slot. |
 | `projectorctl retire` | Clear the inactive retained slot after the rollback window. |
 | `make dev-wipe-active-slot` | Disposable-dev-only wipe using `migrator_role`; never use in an acceptance run. |
-| `outboxctl inspect` | Inspect stale, failed, and repeatedly redelivered outbox rows. |
+| `make outboxctl` / `bin/outboxctl inspect` | Inspect stale, failed, and repeatedly redelivered outbox rows. |
+
+`transferctl reconcile` requires `--url`, `--token`, `--tenant`,
+`--exception`, and `--operator-id`. It never creates a journal adjustment;
+resolution evidence is recorded against the immutable exception lifecycle.
 
 ## Troubleshooting rules
 

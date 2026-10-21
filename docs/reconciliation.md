@@ -19,7 +19,10 @@ Reconciliation detects mismatches; it never auto-adjusts a balance. Every except
 ```text
 OPEN -> INVESTIGATING -> RESOLVED
                          \-> ACCEPTED_WITH_EVIDENCE (only for non-monetary operational discrepancy)
-OPEN -> REOPENED (new evidence)
+
+Opening evidence is immutable. Investigation evidence is appended as immutable
+notes. Terminal exceptions are never reopened in place; a later contradiction
+opens a new exception with new opening evidence.
 ```
 
 Monetary exceptions cannot be marked resolved until the source and destination journal entries, idempotency keys, and transfer state agree. A resolution records who/what/when and links to immutable evidence.

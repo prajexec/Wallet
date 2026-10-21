@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Phase 7 — Reconciliation and operator tooling
+
+- Added immutable reconciliation-exception lifecycle fields and append-only investigation notes.
+- Added wallet and transfer operator CLIs for authoritative balance inspection, journal replay checks, saga inspection, exception handling, and outbox inspection.
+- Added explicit reconciliation decision logic that queries stable wallet operation IDs and never adjusts balances automatically.
+- Added journal balancing and cross-wallet conservation check helpers.
+
 ## [Phase 6 — Transfer saga and cross-wallet orchestration] — 2026-10-21
 
 ### Added

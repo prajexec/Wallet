@@ -66,7 +66,11 @@ func (r *Repository) GetOperation(ctx context.Context, tenantID, operationID ide
 	if err != nil {
 		return OperationResponse{}, err
 	}
-	return OperationResponse{OperationID: operation.OperationID, Status: operation.Status, JournalTransactionID: operation.JournalTransactionID}, nil
+	return OperationResponse{
+		TenantID: operation.TenantID, OperationID: operation.OperationID, WalletID: operation.WalletID,
+		TransferID: operation.TransferID, OperationKind: operation.OperationKind, AmountMinor: operation.AmountMinor,
+		Currency: money.Currency(operation.Currency), Status: operation.Status, JournalTransactionID: operation.JournalTransactionID,
+	}, nil
 }
 
 func (r *Repository) Reserve(ctx context.Context, tenantID, walletID, operationID identifiers.UUID, command TransferMoneyCommand, requestHash string) (CommandResult, error) {
@@ -115,7 +119,7 @@ func (r *Repository) stateOnlyOperation(ctx context.Context, tenantID, walletID,
 			if err != nil {
 				return err
 			}
-			if balance.AvailableBalanceMinor < command.AmountMinor {
+			if int64(balance.AvailableBalanceMinor) < command.AmountMinor {
 				return ErrInsufficientFunds
 			}
 		}
@@ -277,7 +281,7 @@ func (r *Repository) postMoney(ctx context.Context, tenantID, walletID identifie
 		if err != nil {
 			return err
 		}
-		if withdrawal && balance.AvailableBalanceMinor < amountMinor {
+		if withdrawal && int64(balance.AvailableBalanceMinor) < amountMinor {
 			return ErrInsufficientFunds
 		}
 		clearingName := "deposit-clearing"
@@ -405,7 +409,7 @@ func (r *Repository) GetBalance(ctx context.Context, tenantID, walletID identifi
 	}
 	return BalanceResponse{
 		WalletID:      walletID,
-		Balance:       Balance{Currency: money.USD, CurrentMinor: bal.PostedBalanceMinor, HeldMinor: bal.HeldBalanceMinor, AvailableMinor: bal.AvailableBalanceMinor},
+		Balance:       Balance{Currency: money.USD, CurrentMinor: bal.PostedBalanceMinor, HeldMinor: bal.HeldBalanceMinor, AvailableMinor: int64(bal.AvailableBalanceMinor)},
 		Authoritative: true,
 		AsOfVersion:   bal.AsOfVersion,
 	}, nil

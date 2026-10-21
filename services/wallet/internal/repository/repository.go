@@ -82,7 +82,13 @@ type JournalCommandResponse struct {
 }
 
 type OperationResponse struct {
+	TenantID             identifiers.UUID  `json:"tenant_id"`
 	OperationID          identifiers.UUID  `json:"operation_id"`
+	WalletID             identifiers.UUID  `json:"wallet_id"`
+	TransferID           identifiers.UUID  `json:"transfer_id"`
+	OperationKind        string            `json:"operation_kind"`
+	AmountMinor          int64             `json:"amount_minor"`
+	Currency             money.Currency    `json:"currency"`
 	Status               string            `json:"status"`
 	JournalTransactionID *identifiers.UUID `json:"journal_transaction_id,omitempty"`
 }

@@ -23,7 +23,7 @@ WALLET_DESTINATION_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrat
 TRANSFER_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/transfer_test?sslmode=disable
 READ_TEST_MIGRATOR_DATABASE_URL ?= postgres://migrator_role:migrator_dev_password@127.0.0.1:5432/read_test?sslmode=disable
 
-.PHONY: build test test-race vet lint sqlc sqlc-check projectorctl dev-wipe-active-slot up down migrate migrate-test migrate-wallet-source migrate-wallet-destination migrate-wallet-source-test migrate-wallet-destination-test migrate-transfer migrate-transfer-test migrate-read migrate-read-test docs-check check-boundaries role-isolation test-integration ci
+.PHONY: build test test-race vet lint sqlc sqlc-check projectorctl walletctl transferctl outboxctl reconcile dev-wipe-active-slot up down migrate migrate-test migrate-wallet-source migrate-wallet-destination migrate-wallet-source-test migrate-wallet-destination-test migrate-transfer migrate-transfer-test migrate-read migrate-read-test docs-check check-boundaries role-isolation test-integration ci
 
 build:
 	@set -e; for module in $(GO_MODULES); do (cd $$module && go build ./...); done
@@ -46,6 +46,21 @@ sqlc-check: sqlc
 projectorctl:
 	mkdir -p bin
 	go build -o bin/projectorctl ./services/projector/cmd/projectorctl
+
+walletctl:
+	mkdir -p bin
+	go build -o bin/walletctl ./services/wallet/cmd/walletctl
+
+transferctl:
+	mkdir -p bin
+	go build -o bin/transferctl ./services/transfer/cmd/transferctl
+
+outboxctl:
+	mkdir -p bin
+	go build -o bin/outboxctl ./services/wallet/cmd/outboxctl
+
+reconcile: transferctl
+	bin/transferctl reconcile $(ARGS)
 
 dev-wipe-active-slot:
 	DATABASE_URL="$(READ_MIGRATOR_DATABASE_URL)" go run ./services/projector/cmd/projectorctl wipe-active

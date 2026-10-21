@@ -9,6 +9,14 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 if [[ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" && -z "${PUPPETEER_EXECUTABLE_PATH:-}" ]]; then
   export PUPPETEER_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 fi
+if [[ -z "${PUPPETEER_EXECUTABLE_PATH:-}" ]]; then
+  for browser in chromium chromium-browser google-chrome; do
+    if command -v "$browser" >/dev/null 2>&1; then
+      export PUPPETEER_EXECUTABLE_PATH="$(command -v "$browser")"
+      break
+    fi
+  done
+fi
 
 DOCS=()
 while IFS= read -r -d '' doc; do
@@ -19,6 +27,12 @@ done < <(
 )
 
 rendered=0
+PUPPETEER_CONFIG="$WORK_DIR/puppeteer.json"
+if [[ "$(id -u)" -eq 0 || "${PUPPETEER_NO_SANDBOX:-}" == "1" ]]; then
+  printf '%s\n' '{"args":["--no-sandbox","--disable-setuid-sandbox"]}' > "$PUPPETEER_CONFIG"
+else
+  printf '%s\n' '{}' > "$PUPPETEER_CONFIG"
+fi
 for doc in "${DOCS[@]}"; do
   [[ -n "$doc" ]] || continue
   doc_work_dir="$WORK_DIR/${doc//\//__}"
@@ -48,9 +62,10 @@ for doc in "${DOCS[@]}"; do
   for source in "$doc_work_dir"/*.mmd; do
     [[ -f "$source" ]] || continue
     output="${source%.mmd}.svg"
-    npx --yes -p @mermaid-js/mermaid-cli mmdc \
+    npx --yes -p @mermaid-js/mermaid-cli@11.12.0 mmdc \
       --input "$source" \
       --output "$output" \
+      --puppeteerConfigFile "$PUPPETEER_CONFIG" \
       --quiet
     rendered=$((rendered + 1))
   done

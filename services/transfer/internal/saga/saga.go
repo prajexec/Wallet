@@ -89,8 +89,9 @@ func (s *Service) compensateReserve(ctx context.Context, tenantID identifiers.UU
 	err := s.doStep(ctx, tenantID, t.TransferID, relStep, "COMPENSATING", s.source, t.SourceWalletID, "releases", cmd)
 	if err != nil {
 		if !walletclient.IsClass(err, walletclient.Ambiguous) {
-			_ = s.repo.SetState(ctx, tenantID, t.TransferID, "RECONCILIATION_REQUIRED")
-			_ = s.repo.Reconciliation(ctx, tenantID, t.TransferID, "COMPENSATION_FAILED", map[string]any{"error": err.Error(), "stage": "release_reserve"})
+			if persistErr := s.persistReconciliation(ctx, tenantID, t.TransferID, "COMPENSATION_FAILED", map[string]any{"error": err.Error(), "stage": "release_reserve"}); persistErr != nil {
+				return persistErr
+			}
 		}
 		return err
 	}
@@ -113,8 +114,9 @@ func (s *Service) compensateCapture(ctx context.Context, tenantID identifiers.UU
 	err := s.doStep(ctx, tenantID, t.TransferID, compStep, "COMPENSATING", s.source, t.SourceWalletID, "compensations", cmd)
 	if err != nil {
 		if !walletclient.IsClass(err, walletclient.Ambiguous) {
-			_ = s.repo.SetState(ctx, tenantID, t.TransferID, "RECONCILIATION_REQUIRED")
-			_ = s.repo.Reconciliation(ctx, tenantID, t.TransferID, "COMPENSATION_FAILED", map[string]any{"error": err.Error(), "stage": "compensate_capture"})
+			if persistErr := s.persistReconciliation(ctx, tenantID, t.TransferID, "COMPENSATION_FAILED", map[string]any{"error": err.Error(), "stage": "compensate_capture"}); persistErr != nil {
+				return persistErr
+			}
 		}
 		return err
 	}
@@ -135,8 +137,9 @@ func (s *Service) doStep(ctx context.Context, tenantID, transferID identifiers.U
 			return nil
 		}
 		if walletclient.IsClass(err, walletclient.Ambiguous) {
-			_ = s.repo.SetState(ctx, tenantID, transferID, "RECONCILIATION_REQUIRED")
-			_ = s.repo.Reconciliation(ctx, tenantID, transferID, step.Name, map[string]any{"operation_id": step.OperationID.String(), "error": err.Error()})
+			if persistErr := s.persistReconciliation(ctx, tenantID, transferID, step.Name, map[string]any{"operation_id": step.OperationID.String(), "error": err.Error()}); persistErr != nil {
+				return persistErr
+			}
 			return err
 		}
 		if !walletclient.IsClass(err, walletclient.Transient) {
@@ -147,4 +150,14 @@ func (s *Service) doStep(ctx context.Context, tenantID, transferID identifiers.U
 		time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
 	}
 	return fmt.Errorf("step %s retries exhausted", step.Name)
+}
+
+func (s *Service) persistReconciliation(ctx context.Context, tenantID, transferID identifiers.UUID, category string, evidence any) error {
+	if err := s.repo.SetState(ctx, tenantID, transferID, "RECONCILIATION_REQUIRED"); err != nil {
+		return fmt.Errorf("persist reconciliation state: %w", err)
+	}
+	if _, _, err := s.repo.Reconciliation(ctx, tenantID, transferID, category, true, evidence); err != nil {
+		return fmt.Errorf("persist reconciliation exception: %w", err)
+	}
+	return nil
 }

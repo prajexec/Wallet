@@ -43,9 +43,41 @@ type Command struct {
 	TargetOperationID identifiers.UUID `json:"target_operation_id,omitempty"`
 }
 type Response struct {
+	TenantID             identifiers.UUID  `json:"tenant_id"`
 	OperationID          identifiers.UUID  `json:"operation_id"`
+	WalletID             identifiers.UUID  `json:"wallet_id"`
+	TransferID           identifiers.UUID  `json:"transfer_id"`
+	OperationKind        string            `json:"operation_kind"`
+	AmountMinor          int64             `json:"amount_minor"`
+	Currency             string            `json:"currency"`
 	Status               string            `json:"status"`
 	JournalTransactionID *identifiers.UUID `json:"journal_transaction_id,omitempty"`
+}
+
+func (c *Client) GetOperation(ctx context.Context, tenantID, operationID identifiers.UUID) (Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/v1/operations/"+operationID.String(), nil)
+	if err != nil {
+		return Response{}, err
+	}
+	req.Header.Set("X-Tenant-ID", tenantID.String())
+	req.Header.Set("X-Internal-Token", c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Response{}, &Error{Class: Ambiguous, Err: err}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var result Response
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return Response{}, err
+		}
+		return result, nil
+	}
+	class := Permanent
+	if resp.StatusCode >= 500 {
+		class = Transient
+	}
+	return Response{}, &Error{Class: class, Status: resp.StatusCode, Err: fmt.Errorf("wallet operation lookup returned HTTP %d", resp.StatusCode)}
 }
 
 func New(baseURL, token string, client *http.Client) *Client {

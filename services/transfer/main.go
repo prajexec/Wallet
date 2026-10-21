@@ -9,8 +9,10 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"digitalwallet/services/transfer/internal/config"
+	"digitalwallet/services/transfer/internal/reconciliation"
 	"digitalwallet/services/transfer/internal/repository"
 	"digitalwallet/services/transfer/internal/saga"
 	"digitalwallet/services/transfer/internal/server"
@@ -43,6 +45,7 @@ func main() {
 	ids := identifiers.NewGenerator()
 	store := repository.New(database, ids)
 	sagaService := saga.New(store, walletclient.New(cfg.WalletSourceURL, cfg.WalletInternalToken, walletclient.TimeoutClient(cfg.StepTimeout)), walletclient.New(cfg.WalletDestinationURL, cfg.WalletInternalToken, walletclient.TimeoutClient(cfg.StepTimeout)), cfg.MaxAttempts, cfg.StepTimeout)
+	reconciliationService := reconciliation.New(store, sagaService, walletclient.New(cfg.WalletSourceURL, cfg.WalletInternalToken, walletclient.TimeoutClient(cfg.StepTimeout)), walletclient.New(cfg.WalletDestinationURL, cfg.WalletInternalToken, walletclient.TimeoutClient(cfg.StepTimeout)))
 	httpServer := server.New(cfg, logger, ids, server.Dependencies{
 		Postgres: database.PingContext,
 		NATS:     func(context.Context) error { return natsConnection.FlushTimeout(cfg.HealthTimeout) },
@@ -54,6 +57,20 @@ func main() {
 	}, store)
 	rootContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		ticker := time.NewTicker(cfg.ReconciliationInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-rootContext.Done():
+				return
+			case <-ticker.C:
+				if err := reconciliationService.Sweep(rootContext, cfg.ReconciliationOwner); err != nil {
+					logger.Error("reconciliation sweep failed", "error", err)
+				}
+			}
+		}
+	}()
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.ListenAndServe() }()
 	select {

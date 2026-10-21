@@ -175,6 +175,13 @@ erDiagram
         string category
         string status
         jsonb evidence
+        boolean is_monetary
+        string owner
+        string resolution_action
+        string resolved_by
+        timestamp resolved_at
+        jsonb resolution_evidence
+        timestamp updated_at
     }
 ```
 
