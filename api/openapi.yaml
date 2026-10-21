@@ -897,6 +897,21 @@ components:
         dead_letter_count:
           type: integer
           format: int64
+        published_outbox_count:
+          type: integer
+          format: int64
+        duplicate_publish_count:
+          type: integer
+          format: int64
+        duplicate_rate:
+          type: number
+          format: double
+        total_steps:
+          type: integer
+          format: int64
+        retry_count:
+          type: integer
+          format: int64
     ReadBalanceResponse:
       type: object
       required: [wallet_id, currency, posted_balance_minor, available_balance_minor, read_model_consistent_through, authoritative, projection_slot, updated_at]

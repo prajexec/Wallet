@@ -62,12 +62,12 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 
 1. Contracts and documentation — complete (`phase-1-contracts`).
 2. Repository foundation and local infrastructure — complete (`phase-2-foundation`).
-3. Immutable wallet ledger — current phase.
-4. Outbox and event consumption.
-5. CQRS projections.
-6. Transfer saga.
-7. Reconciliation and operations tooling.
-8. Contention-first benchmarks.
+3. Immutable wallet ledger — complete (`phase-3-ledger`).
+4. Outbox and event consumption — complete (`phase-4-outbox`).
+5. CQRS projections — complete (`phase-5-projections`).
+6. Transfer saga — complete (`phase-6-transfer`).
+7. Reconciliation and operations tooling — complete (`phase-7-reconciliation`).
+8. Contention-first benchmarks — complete (`phase-8-benchmarks`).
 
 ## Quickstart
 

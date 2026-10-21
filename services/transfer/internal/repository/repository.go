@@ -442,3 +442,30 @@ func withTx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
 	}
 	return tx.Commit()
 }
+
+type TransferStatsResponse struct {
+	Service                     string          `json:"service"`
+	UnpublishedOutboxCount      int64           `json:"unpublished_outbox_count"`
+	OldestUnpublishedAgeSeconds float64         `json:"oldest_unpublished_age_seconds"`
+	AttemptsHistogram           map[int32]int64 `json:"attempts_histogram"`
+	BufferedEventCount          int64           `json:"buffered_event_count"`
+	OpenGapCount                int64           `json:"open_gap_count"`
+	DeadLetterCount             int64           `json:"dead_letter_count"`
+	TotalSteps                  int64           `json:"total_steps"`
+	RetryCount                  int64           `json:"retry_count"`
+}
+
+func (r *Repository) GetStats(ctx context.Context) (TransferStatsResponse, error) {
+	stats := TransferStatsResponse{
+		Service:           "transfer",
+		AttemptsHistogram: make(map[int32]int64),
+	}
+	var total, retries int64
+	err := r.db.QueryRowContext(ctx, `SELECT count(*), COALESCE(SUM(CASE WHEN attempts > 1 THEN attempts - 1 ELSE 0 END), 0) FROM transfer_steps`).Scan(&total, &retries)
+	if err != nil {
+		return stats, err
+	}
+	stats.TotalSteps = total
+	stats.RetryCount = retries
+	return stats, nil
+}

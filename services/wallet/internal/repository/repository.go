@@ -400,6 +400,9 @@ type StatsResponse struct {
 	BufferedEventCount          int64           `json:"buffered_event_count"`
 	OpenGapCount                int64           `json:"open_gap_count"`
 	DeadLetterCount             int64           `json:"dead_letter_count"`
+	PublishedOutboxCount        int64           `json:"published_outbox_count,omitempty"`
+	DuplicatePublishCount       int64           `json:"duplicate_publish_count,omitempty"`
+	DuplicateRate               float64         `json:"duplicate_rate,omitempty"`
 }
 
 // GetStats returns outbox observability metrics without a metrics stack.
@@ -417,6 +420,19 @@ WHERE published_at IS NULL;
 `
 	if err := r.pool.QueryRow(ctx, countQuery).Scan(&stats.UnpublishedOutboxCount, &stats.OldestUnpublishedAgeSeconds); err != nil {
 		return stats, fmt.Errorf("query outbox count and age: %w", err)
+	}
+
+	const pubQuery = `
+SELECT 
+    count(*),
+    count(*) FILTER (WHERE attempts > 1)
+FROM outbox_messages
+WHERE published_at IS NOT NULL;
+`
+	if err := r.pool.QueryRow(ctx, pubQuery).Scan(&stats.PublishedOutboxCount, &stats.DuplicatePublishCount); err == nil {
+		if stats.PublishedOutboxCount > 0 {
+			stats.DuplicateRate = float64(stats.DuplicatePublishCount) / float64(stats.PublishedOutboxCount)
+		}
 	}
 
 	const histQuery = `

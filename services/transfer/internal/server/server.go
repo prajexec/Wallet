@@ -74,12 +74,33 @@ func New(cfg config.Config, logger *slog.Logger, ids identifiers.Generator, depe
 
 func (s *Server) internalHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /internal/v1/stats", s.stats)
 	mux.HandleFunc("GET /internal/v1/reconciliation/exceptions", s.listExceptions)
 	mux.HandleFunc("POST /internal/v1/reconciliation/exceptions/{exception_id}/investigate", s.investigateException)
 	mux.HandleFunc("POST /internal/v1/reconciliation/exceptions/{exception_id}/resolve", s.resolveException)
 	mux.HandleFunc("POST /internal/v1/reconciliation/exceptions/{exception_id}/accept", s.acceptException)
 	mux.HandleFunc("GET /internal/v1/reconciliation/exceptions/{exception_id}/notes", s.exceptionNotes)
 	return s.requireInternalToken(s.middleware(mux))
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusOK, repository.TransferStatsResponse{Service: "transfer", AttemptsHistogram: map[int32]int64{}})
+		return
+	}
+	type statsProvider interface {
+		GetStats(context.Context) (repository.TransferStatsResponse, error)
+	}
+	if sp, ok := s.store.(statsProvider); ok {
+		stats, err := sp.GetStats(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, stats)
+		return
+	}
+	writeJSON(w, http.StatusOK, repository.TransferStatsResponse{Service: "transfer", AttemptsHistogram: map[int32]int64{}})
 }
 
 func (s *Server) requireInternalToken(next http.Handler) http.Handler {

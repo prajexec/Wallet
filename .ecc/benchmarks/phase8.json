@@ -1,0 +1,395 @@
+[
+  {
+    "workload": "hot-wallet-withdrawals",
+    "run": 1,
+    "metrics": {
+      "withdrawal": {
+        "count": 50,
+        "accepted": 25,
+        "rejected": 25,
+        "errors": 0,
+        "p50_ms": 52.73775,
+        "p95_ms": 179.134,
+        "p99_ms": 188.739083,
+        "max_ms": 191.138333,
+        "throughput_per_sec": 187.12790831762445
+      }
+    },
+    "checks": {
+      "available_minor": 0,
+      "negative_balance_protection": true,
+      "seed_minor": 25
+    }
+  },
+  {
+    "workload": "even-wallet-deposits",
+    "run": 1,
+    "metrics": {
+      "deposit": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 19.5915,
+        "p95_ms": 26.626416,
+        "p99_ms": 28.103667,
+        "max_ms": 28.958958,
+        "throughput_per_sec": 757.9035163964393
+      }
+    },
+    "checks": {
+      "journal_append_only": true,
+      "wallet_count": 50
+    }
+  },
+  {
+    "workload": "transfer-saga",
+    "run": 1,
+    "metrics": {
+      "end_to_end": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 480.831125,
+        "p95_ms": 719.471333,
+        "p99_ms": 724.179292,
+        "max_ms": 753.987875,
+        "throughput_per_sec": 32.38698211031914
+      }
+    },
+    "checks": {
+      "destination_wallet": "01a15f57-e4bf-7337-b5c0-c169a2ab57c7",
+      "retry_count": 277,
+      "source_wallet": "01a15f57-e4b8-7d03-8e28-bb677c71963d",
+      "terminal_successes": 50
+    }
+  },
+  {
+    "workload": "outbox-relay",
+    "run": 1,
+    "metrics": {
+      "publish_lag": {
+        "count": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 172.797083,
+        "p95_ms": 172.797083,
+        "p99_ms": 172.797083,
+        "max_ms": 172.797083,
+        "throughput_per_sec": 5.787134728425943
+      }
+    },
+    "checks": {
+      "duplicate_rate": 0,
+      "published_rows": 50
+    }
+  },
+  {
+    "workload": "projection-catch-up",
+    "run": 1,
+    "metrics": {
+      "write_to_read_model": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 303.570833,
+        "p95_ms": 383.402125,
+        "p99_ms": 404.502166,
+        "max_ms": 413.358458,
+        "throughput_per_sec": 43.9571018247582
+      }
+    },
+    "checks": {
+      "read_your_writes": true,
+      "versions_observed": 50
+    }
+  },
+  {
+    "workload": "reconciliation",
+    "run": 1,
+    "metrics": {
+      "scan_and_invariant_check": {
+        "count": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 55.17125,
+        "p95_ms": 55.17125,
+        "p99_ms": 55.17125,
+        "max_ms": 55.17125,
+        "throughput_per_sec": 18.12538233228357
+      }
+    },
+    "checks": {
+      "active_exception_rows_seen": 0,
+      "automatic_adjustment": false,
+      "invariant_verification": true,
+      "scan_requests": 50
+    }
+  },
+  {
+    "workload": "hot-wallet-withdrawals",
+    "run": 2,
+    "metrics": {
+      "withdrawal": {
+        "count": 50,
+        "accepted": 25,
+        "rejected": 25,
+        "errors": 0,
+        "p50_ms": 21.973792,
+        "p95_ms": 41.91475,
+        "p99_ms": 44.184958,
+        "max_ms": 46.419125,
+        "throughput_per_sec": 674.990806287723
+      }
+    },
+    "checks": {
+      "available_minor": 0,
+      "negative_balance_protection": true,
+      "seed_minor": 25
+    }
+  },
+  {
+    "workload": "even-wallet-deposits",
+    "run": 2,
+    "metrics": {
+      "deposit": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 16.46975,
+        "p95_ms": 21.523084,
+        "p99_ms": 21.843958,
+        "max_ms": 23.059167,
+        "throughput_per_sec": 871.7623161664677
+      }
+    },
+    "checks": {
+      "journal_append_only": true,
+      "wallet_count": 50
+    }
+  },
+  {
+    "workload": "transfer-saga",
+    "run": 2,
+    "metrics": {
+      "end_to_end": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 370.585375,
+        "p95_ms": 502.254167,
+        "p99_ms": 567.356542,
+        "max_ms": 581.696166,
+        "throughput_per_sec": 41.015141149506746
+      }
+    },
+    "checks": {
+      "destination_wallet": "01a15f57-f1d4-74b1-b0e5-6e7ec990fa6e",
+      "retry_count": 477,
+      "source_wallet": "01a15f57-f1cb-7969-95a9-a55af03c52e6",
+      "terminal_successes": 50
+    }
+  },
+  {
+    "workload": "outbox-relay",
+    "run": 2,
+    "metrics": {
+      "publish_lag": {
+        "count": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 220.778041,
+        "p95_ms": 220.778041,
+        "p99_ms": 220.778041,
+        "max_ms": 220.778041,
+        "throughput_per_sec": 4.529435968679512
+      }
+    },
+    "checks": {
+      "duplicate_rate": 0,
+      "published_rows": 50
+    }
+  },
+  {
+    "workload": "projection-catch-up",
+    "run": 2,
+    "metrics": {
+      "write_to_read_model": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 264.195041,
+        "p95_ms": 398.576291,
+        "p99_ms": 418.750375,
+        "max_ms": 426.22475,
+        "throughput_per_sec": 44.24589020588708
+      }
+    },
+    "checks": {
+      "read_your_writes": true,
+      "versions_observed": 50
+    }
+  },
+  {
+    "workload": "reconciliation",
+    "run": 2,
+    "metrics": {
+      "scan_and_invariant_check": {
+        "count": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 36.041208,
+        "p95_ms": 36.041208,
+        "p99_ms": 36.041208,
+        "max_ms": 36.041208,
+        "throughput_per_sec": 27.74601783602814
+      }
+    },
+    "checks": {
+      "active_exception_rows_seen": 0,
+      "automatic_adjustment": false,
+      "invariant_verification": true,
+      "scan_requests": 50
+    }
+  },
+  {
+    "workload": "hot-wallet-withdrawals",
+    "run": 3,
+    "metrics": {
+      "withdrawal": {
+        "count": 50,
+        "accepted": 25,
+        "rejected": 25,
+        "errors": 0,
+        "p50_ms": 19.890791,
+        "p95_ms": 35.8835,
+        "p99_ms": 36.055833,
+        "max_ms": 38.564042,
+        "throughput_per_sec": 737.7015850728386
+      }
+    },
+    "checks": {
+      "available_minor": 0,
+      "negative_balance_protection": true,
+      "seed_minor": 25
+    }
+  },
+  {
+    "workload": "even-wallet-deposits",
+    "run": 3,
+    "metrics": {
+      "deposit": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 13.638,
+        "p95_ms": 29.147959,
+        "p99_ms": 37.778792,
+        "max_ms": 38.3665,
+        "throughput_per_sec": 722.7565866831462
+      }
+    },
+    "checks": {
+      "journal_append_only": true,
+      "wallet_count": 50
+    }
+  },
+  {
+    "workload": "transfer-saga",
+    "run": 3,
+    "metrics": {
+      "end_to_end": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 343.333458,
+        "p95_ms": 487.568125,
+        "p99_ms": 511.415542,
+        "max_ms": 519.386083,
+        "throughput_per_sec": 43.45751935136176
+      }
+    },
+    "checks": {
+      "destination_wallet": "01a15f57-fdc0-7577-a0a9-961f15dc8395",
+      "retry_count": 677,
+      "source_wallet": "01a15f57-fdb2-78cc-aeff-c40cdf25bde1",
+      "terminal_successes": 50
+    }
+  },
+  {
+    "workload": "outbox-relay",
+    "run": 3,
+    "metrics": {
+      "publish_lag": {
+        "count": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 29.032417,
+        "p95_ms": 29.032417,
+        "p99_ms": 29.032417,
+        "max_ms": 29.032417,
+        "throughput_per_sec": 34.44425588127919
+      }
+    },
+    "checks": {
+      "duplicate_rate": 0,
+      "published_rows": 50
+    }
+  },
+  {
+    "workload": "projection-catch-up",
+    "run": 3,
+    "metrics": {
+      "write_to_read_model": {
+        "count": 50,
+        "accepted": 50,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 277.646542,
+        "p95_ms": 593.986958,
+        "p99_ms": 600.940417,
+        "max_ms": 607.914167,
+        "throughput_per_sec": 43.705580548888015
+      }
+    },
+    "checks": {
+      "read_your_writes": true,
+      "versions_observed": 50
+    }
+  },
+  {
+    "workload": "reconciliation",
+    "run": 3,
+    "metrics": {
+      "scan_and_invariant_check": {
+        "count": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "errors": 0,
+        "p50_ms": 39.2525,
+        "p95_ms": 39.2525,
+        "p99_ms": 39.2525,
+        "max_ms": 39.2525,
+        "throughput_per_sec": 25.47608432583912
+      }
+    },
+    "checks": {
+      "active_exception_rows_seen": 0,
+      "automatic_adjustment": false,
+      "invariant_verification": true,
+      "scan_requests": 50
+    }
+  }
+]

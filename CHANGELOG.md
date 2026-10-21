@@ -4,7 +4,20 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-### Phase 7 — Reconciliation and operator tooling
+## [Phase 8 — Contention-first benchmarks] — 2026-10-21
+
+### Added
+
+- Added executable contention-first benchmark harness in `benchmarks/` with CLI runner supporting `-ops`, `-concurrency`, `-repeats`, and `-workloads`.
+- Implemented all six workloads defined in `docs/benchmarking.md`: `hot-wallet-withdrawals`, `even-wallet-deposits`, `transfer-saga`, `outbox-relay`, `projection-catch-up`, and `reconciliation`.
+- Added service-level telemetry for outbox duplicate publish rate on wallet `/internal/v1/stats`.
+- Added `/internal/v1/stats` endpoint to transfer service exposing total steps and aggregate step retry counts.
+- Added Makefile target `make benchmark ARGS="..."`.
+- Executed full 3-repeat contention benchmark run (50 ops, concurrency 16) with zero errors and recorded results in `.ecc/benchmarks/phase8.json` and `docs/benchmarking.md`.
+
+## [Phase 7 — Reconciliation and operations tooling] — 2026-10-21
+
+### Added
 
 - Added immutable reconciliation-exception lifecycle fields and append-only investigation notes.
 - Added wallet and transfer operator CLIs for authoritative balance inspection, journal replay checks, saga inspection, exception handling, and outbox inspection.
