@@ -28,7 +28,7 @@ done < <(
 
 rendered=0
 PUPPETEER_CONFIG="$WORK_DIR/puppeteer.json"
-if [[ "$(id -u)" -eq 0 || "${PUPPETEER_NO_SANDBOX:-}" == "1" ]]; then
+if [[ "$(id -u)" -eq 0 || "${PUPPETEER_NO_SANDBOX:-}" == "1" || "${CI:-}" == "true" ]]; then
   printf '%s\n' '{"args":["--no-sandbox","--disable-setuid-sandbox"]}' > "$PUPPETEER_CONFIG"
 else
   printf '%s\n' '{}' > "$PUPPETEER_CONFIG"

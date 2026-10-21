@@ -4,6 +4,10 @@ Fintech-grade digital wallet backend built around an immutable, double-entry jou
 
 Correctness is the primary goal. Balances are reproducible from the journal; duplicate commands and events cannot create money; ambiguous side effects are handed to reconciliation rather than guessed at.
 
+**Status:** v1 implementation complete. The repository includes the wallet
+ledger, event delivery, CQRS projections, transfer saga, reconciliation tooling,
+operator CLIs, and contention-first benchmark evidence.
+
 ## Scope
 
 The v1 scope is deliberately narrow:
@@ -60,16 +64,30 @@ Each wallet instance owns its own accounts and journal. The transfer service coo
 | [Operations](docs/operations.md) | Local run, environment, migrations, CLIs, and troubleshooting |
 | [ADRs](docs/adr/README.md) | Indexed architecture decision records |
 
-## Phase plan
+## What is included
 
-1. Contracts and documentation — complete (`phase-1-contracts`).
-2. Repository foundation and local infrastructure — complete (`phase-2-foundation`).
-3. Immutable wallet ledger — complete (`phase-3-ledger`).
-4. Outbox and event consumption — complete (`phase-4-outbox`).
-5. CQRS projections — complete (`phase-5-projections`).
-6. Transfer saga — complete (`phase-6-transfer`).
-7. Reconciliation and operations tooling — complete (`phase-7-reconciliation`).
-8. Contention-first benchmarks — complete (`phase-8-benchmarks`).
+| Capability | Description |
+| --- | --- |
+| Wallet ledger | Tenant-scoped USD wallets, immutable double-entry postings, authoritative balances, deposits, withdrawals, holds, and idempotency. |
+| Event delivery | Transactional outbox, leased relay, NATS JetStream, inbox deduplication, ordered consumption, buffering, and dead-letter handling. |
+| Read models | Payload-only CQRS projections with watermarks, read-your-writes waits, dual-slot rebuilds, verification, promotion, rollback, and retirement. |
+| Transfers | Cross-wallet saga with reserve, pending credit, capture, finalize, bounded retries, compensation, and explicit ambiguous-outcome handling. |
+| Reconciliation | Immutable exception lifecycle, append-only investigation notes, evidence-based resolution, and no automatic balance repair. |
+| Operations | `walletctl`, `transferctl`, `outboxctl`, `projectorctl`, internal stats endpoints, role isolation, and repeatable CI checks. |
+| Benchmarks | Six contention-first workloads with recorded p50, p95, p99, throughput, and correctness results. |
+
+## Correctness rules
+
+- The journal is the financial authority; read models are disposable and
+  eventually consistent.
+- Every journal transaction balances debits and credits.
+- Available balance cannot become negative, including under concurrent
+  withdrawals.
+- Duplicate commands and events do not create duplicate financial effects.
+- The transfer service never reads wallet databases directly.
+- Ambiguous side effects enter reconciliation; they are not blindly compensated.
+- Reconciliation detects and records mismatches but never adjusts balances.
+- Internal routes are token-protected and isolated from public listeners.
 
 ## Quickstart
 
@@ -125,30 +143,3 @@ For a route-level view, start with [`docs/api.md`](docs/api.md). For operating
 the local stack or recovering from an ambiguous transfer, use
 [`docs/operations.md`](docs/operations.md) and
 [`docs/reconciliation.md`](docs/reconciliation.md).
-
-## Phase 1 acceptance (historical)
-
-- All required contract documents and ADRs exist.
-- Required Mermaid diagrams are included in the relevant documents.
-- Public and internal endpoint shapes, idempotency semantics, event ordering, saga failure handling, and projection rebuild protocol are written down before implementation.
-- The Phase 1 contract commits intentionally contained no application dependencies or generated code.
-
-## Phase 2 foundation
-
-- The Go workspace contains the shared contract module and three service modules.
-- Local Compose starts one PostgreSQL server with four isolated databases, NATS JetStream, two wallet instances, transfer, and projector.
-- Runtime readiness probes PostgreSQL and NATS; migrations are explicit and wallet tables remain deferred to Phase 3.
-
-## Phase 2 acceptance
-
-- `make ci` passes from the clean repository tree.
-- Compose starts PostgreSQL, NATS JetStream, both wallet instances, transfer, and projector; all service `/readyz` endpoints report healthy.
-- The transfer role cannot connect to either wallet database, and the boundary checker rejects a deliberate forbidden import.
-
-## Phase 3 ledger acceptance
-
-- Wallet balances are authoritative sums over immutable postings; no mutable balance row exists.
-- Deposits, withdrawals, duplicate idempotency keys, tenant scoping, deferred balancing, immutable-table triggers, event/outbox writes, replay checks, and concurrent withdrawal safety are covered by real PostgreSQL tests.
-- `make sqlc` generates the committed pgx storage package and `make sqlc-check` verifies freshness.
-- A dedicated migrator owns service databases and migration-created objects; runtime service roles have minimum database/table grants and cannot alter journal schema.
-- Wallet idempotency records are append-only with transaction-scoped same-key serialization, and wallet `/readyz` keeps NATS degradation distinct from PostgreSQL failure.
